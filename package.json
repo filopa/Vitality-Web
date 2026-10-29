@@ -10,7 +10,9 @@
     "format": "biome format --write"
   },
   "dependencies": {
-    "next": "16.4.0",
+    "firebase-tools": "^15.33.0",
+    "lucide-react": "^1.64.0",
+    "next": "^16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

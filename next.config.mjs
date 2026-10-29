@@ -1,6 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+   images: {
+    formats: ["image/avif", "image/webp"],
+    minimumCacheTTL: 60 * 60 * 24 * 30,
+    deviceSizes: [640, 768, 1024, 1280, 1536],
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "f003.backblazeb2.com",
+        pathname: "/file/Video-Dolphin/**",
+      },
+    ],
+  },
   /* config options here */
+  allowedDevOrigins: ["192.168.1.9"],
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,
