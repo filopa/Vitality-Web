@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Suspense } from "react";
 import ThemeToggle from "../theme-toggle";
 import { RegisterForm } from "./Registerform";
 
@@ -9,13 +10,10 @@ export const metadata = {
 
 export default function RegisterPage() {
   return (
-    <main className="relative flex min-h-dvh flex-col items-center  overflow-hidden bg-background px-5 pb-6 pt-[120px] font-brand text-foreground md:px-8 md:pb-12 lg:justify-center lg:pt-12">
+    <main className="relative flex min-h-dvh flex-col items-center overflow-hidden bg-background px-5 pb-6 pt-[120px] font-brand text-foreground md:px-8 md:pb-12 lg:justify-center lg:pt-12">
       <div className="absolute right-5 top-5 z-10 md:right-8 md:top-8 ">
         <ThemeToggle />
       </div>
-
-      {/* Decorative background glow (top-right) */}
-  
 
       <div className="relative flex w-full max-w-[448px] flex-col gap-4">
         {/* Hero */}
@@ -23,7 +21,8 @@ export default function RegisterPage() {
           <div className="relative size-[72px]">
             <div className="absolute inset-[-22.22%_-27.78%_-33.33%_-27.78%]">
               <Image
-                src="https://f003.backblazeb2.com/file/Video-Dolphin/android-icon-foreground.png" alt="Vitality"
+                src="https://f003.backblazeb2.com/file/Video-Dolphin/android-icon-foreground.png"
+                alt="Vitality"
                 fill
                 sizes="112px"
                 className="max-w-none"
@@ -41,7 +40,9 @@ export default function RegisterPage() {
 
         {/* Card */}
         <section className="rounded-[20px] bg-surface px-6 pb-6 pt-10 text-surface-foreground shadow-[0_8px_12px_rgba(15,23,42,0.08)] md:px-10 md:pb-10 md:pt-12">
-          <RegisterForm />
+          <Suspense fallback={<div className="py-8 text-center text-sm text-muted">Loading form...</div>}>
+            <RegisterForm />
+          </Suspense>
         </section>
 
         {/* Privacy note */}
@@ -58,13 +59,17 @@ export default function RegisterPage() {
           </p>
         </div>
 
-        <p className="pb-8 pt-2 text-center text-base leading-6 text-muted">
+        <p className="pt-2 text-center text-base leading-6 text-muted">
           Already have an account?{" "}
-          <Link
-            href="/login"
-            className="font-semibold text-primary hover:underline"
-          >
+          <Link href="/login" className="font-semibold text-primary hover:underline">
             Log in
+          </Link>
+        </p>
+
+        <p className="pb-8 text-center text-sm leading-5 text-muted">
+          Are you a healthcare professional?{" "}
+          <Link href="/signup/doctor" className="font-semibold text-primary hover:underline">
+            Join as a doctor →
           </Link>
         </p>
       </div>
