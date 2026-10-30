@@ -14,6 +14,7 @@ const EXEMPT_PATHS = [
   "/terms",
   "/privacy",
   "/complete-profile",
+  "/profile",
 ];
 
 const isExempt = (pathname) =>

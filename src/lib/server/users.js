@@ -46,6 +46,44 @@ export async function saveProfile(decoded, profile) {
   return updatedSnap.val();
 }
 
+/** Updates user profile fields, vitals, emergency contact, or photos while preserving email. */
+export async function updateUserProfile(uid, updates) {
+  const userReference = userRef(uid);
+  const existingSnap = await userReference.get();
+  if (!existingSnap.exists()) {
+    throw new Error("User not found");
+  }
+
+  // Prevent email, uid, or password from being updated
+  const {
+    email: _email,
+    uid: _uid,
+    password: _password,
+    ...cleanUpdates
+  } = updates;
+
+  const now = Date.now();
+  const payload = {
+    ...cleanUpdates,
+    lastSeen: now,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Sync photo keys if any photo is passed
+  if (cleanUpdates.urlProfile || cleanUpdates.photoURL) {
+    const photo = cleanUpdates.urlProfile || cleanUpdates.photoURL;
+    payload.urlProfile = photo;
+    payload.photoURL = photo;
+    payload.urlAvatar =
+      cleanUpdates.urlAvatar || cleanUpdates.avatarURL || photo;
+    payload.avatarURL = payload.urlAvatar;
+  }
+
+  await userReference.update(payload);
+  const updatedSnap = await userReference.get();
+  return updatedSnap.val();
+}
+
 export async function deleteUserData(uid) {
   await userRef(uid).remove();
   // TODO: also delete this user's related data (posts, comments, messages, uploaded files).

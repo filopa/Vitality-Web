@@ -74,6 +74,19 @@ export function getMissingFields(profile) {
 export function toPublicProfile(profile) {
   if (!profile) return null;
 
+  const photo =
+    profile.urlProfile ||
+    profile.photoURL ||
+    profile.avatarURL ||
+    profile.urlAvatar ||
+    "";
+  const avatar =
+    profile.urlAvatar ||
+    profile.avatarURL ||
+    profile.photoURL ||
+    profile.urlProfile ||
+    "";
+
   return {
     uid: profile.uid ?? "",
     name: profile.name ?? "",
@@ -85,8 +98,16 @@ export function toPublicProfile(profile) {
     birthday: profile.birthday ?? "",
     requestedType: profile.requestedType ?? "",
     bio: profile.bio ?? "",
-    photoURL: profile.photoURL ?? profile.avatarURL ?? "",
-    avatarURL: profile.avatarURL ?? profile.photoURL ?? "",
+    photoURL: photo,
+    avatarURL: avatar,
+    urlProfile: profile.urlProfile ?? photo,
+    urlAvatar: profile.urlAvatar ?? avatar,
+    vitals: profile.vitals ?? null,
+    emergencyContact: profile.emergencyContact ?? profile.emergency ?? null,
+    family: profile.family ?? {},
+    active: profile.active ?? true,
+    lastSeen: profile.lastSeen ?? null,
     type: profile.type ?? "user",
+    createdAt: profile.createdAt ?? null,
   };
 }

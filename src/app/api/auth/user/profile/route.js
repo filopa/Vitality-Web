@@ -6,7 +6,17 @@ import {
   validateProfile,
 } from "@/lib/profile";
 import { authenticate, fail, ok } from "@/lib/server/api";
-import { getUser, isUsernameTaken, saveProfile } from "@/lib/server/users";
+import {
+  getUser,
+  isUsernameTaken,
+  saveProfile,
+  updateUserProfile,
+} from "@/lib/server/users";
+import {
+  isValidName,
+  isValidUsername,
+  USERNAME_ERROR_MESSAGE,
+} from "@/lib/validations";
 
 function describe(user) {
   const missing = getMissingFields(user);
@@ -36,36 +46,98 @@ export async function PATCH(request) {
   }
 
   const existingUser = await getUser(decoded.uid);
-  const storedUsername = String(existingUser?.username ?? "").trim();
-  const profile = normalizeProfile({
-    ...existingUser,
-    ...body,
-    username: storedUsername || body.username,
-    requestedType: body.requestedType ?? existingUser?.requestedType ?? "",
-  });
-  const phoneE164 = getPhoneE164(profile.phone, profile.country);
-  if (phoneE164) profile.phone = phoneE164;
-  if (storedUsername) profile.username = storedUsername;
-  const errors = validateProfile(profile);
-  if (storedUsername) delete errors.username;
-  if (body.terms !== true)
-    errors.terms = "You must accept the terms and conditions.";
-  if (Object.keys(errors).length > 0) {
-    return fail(400, "VALIDATION_ERROR", "Please fix the highlighted fields.", {
-      errors,
-    });
-  }
-  if (!["user", "doctor"].includes(profile.requestedType)) {
-    return fail(400, "INVALID_REQUESTED_TYPE", "Invalid account type.");
-  }
-  if (
-    !storedUsername &&
-    (await isUsernameTaken(profile.username, decoded.uid))
-  ) {
-    return fail(409, "USERNAME_TAKEN", "This username is already taken.", {
-      errors: { username: "This username is already taken." },
-    });
+  if (!existingUser) {
+    return fail(404, "NOT_FOUND", "User profile not found.");
   }
 
-  return ok(describe(await saveProfile(decoded, profile)));
+  // Handle initial onboarding completion from /complete-profile
+  if (body.isInitialSetup || (body.terms === true && body.requestedType)) {
+    const storedUsername = String(existingUser?.username ?? "").trim();
+    const profile = normalizeProfile({
+      ...existingUser,
+      ...body,
+      username: storedUsername || body.username,
+      requestedType: body.requestedType ?? existingUser?.requestedType ?? "",
+    });
+    const phoneE164 = getPhoneE164(profile.phone, profile.country);
+    if (phoneE164) profile.phone = phoneE164;
+    if (storedUsername) profile.username = storedUsername;
+    const errors = validateProfile(profile);
+    if (storedUsername) delete errors.username;
+    if (body.terms !== true)
+      errors.terms = "You must accept the terms and conditions.";
+    if (Object.keys(errors).length > 0) {
+      return fail(
+        400,
+        "VALIDATION_ERROR",
+        "Please fix the highlighted fields.",
+        {
+          errors,
+        },
+      );
+    }
+    if (!["user", "doctor"].includes(profile.requestedType)) {
+      return fail(400, "INVALID_REQUESTED_TYPE", "Invalid account type.");
+    }
+    if (
+      !storedUsername &&
+      (await isUsernameTaken(profile.username, decoded.uid))
+    ) {
+      return fail(409, "USERNAME_TAKEN", "This username is already taken.", {
+        errors: { username: "This username is already taken." },
+      });
+    }
+
+    return ok(describe(await saveProfile(decoded, profile)));
+  }
+
+  // Regular profile / vitals / emergency / photo updates from the Profile page
+  const errors = {};
+
+  if (body.username !== undefined && body.username !== existingUser.username) {
+    const cleanUsername = String(body.username).trim().toLowerCase();
+    if (!isValidUsername(cleanUsername)) {
+      errors.username = USERNAME_ERROR_MESSAGE;
+    } else if (await isUsernameTaken(cleanUsername, decoded.uid)) {
+      errors.username = "This username is already taken.";
+    }
+  }
+
+  if (body.name !== undefined && !isValidName(String(body.name))) {
+    errors.name = "Name must be between 2 and 50 characters.";
+  }
+
+  if (
+    body.bio !== undefined &&
+    typeof body.bio === "string" &&
+    body.bio.length > 150
+  ) {
+    errors.bio = "Bio cannot exceed 150 characters.";
+  }
+
+  if (
+    body.country !== undefined &&
+    typeof body.country === "string" &&
+    body.country.length > 150
+  ) {
+    errors.country = "Country cannot exceed 150 characters.";
+  }
+
+  if (
+    body.gender !== undefined &&
+    body.gender &&
+    !["male", "female"].includes(String(body.gender).toLowerCase())
+  ) {
+    errors.gender = "Gender must be male or female.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return fail(400, "VALIDATION_ERROR", "Validation failed.", { errors });
+  }
+
+  // Prevent email updates ("except for email")
+  const { email: _email, ...allowedUpdates } = body;
+
+  const updatedUser = await updateUserProfile(decoded.uid, allowedUpdates);
+  return ok(describe(updatedUser));
 }
