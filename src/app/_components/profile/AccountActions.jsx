@@ -1,14 +1,16 @@
 "use client";
 
-import { signOut } from "firebase/auth";
 import { useState } from "react";
 import { authedFetch } from "@/lib/client/api";
-import { auth } from "@/lib/firebase";
-import { clearStoredSession } from "@/lib/client/session";
 
 async function endSession() {
-  await signOut(auth).catch(() => {});
-  clearStoredSession();
+  const response = await fetch("/api/auth/session", {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error("We couldn't sign you out. Please try again.");
+  }
   window.location.assign("/");
 }
 
@@ -17,14 +19,23 @@ export function AccountActions() {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
+  async function handleSignOut() {
+    setError("");
+    try {
+      await endSession();
+    } catch (err) {
+      setError(err.message || "We couldn't sign you out. Please try again.");
+    }
+  }
+
   async function handleDelete() {
     setDeleting(true);
     setError("");
     try {
-      const res = await authedFetch("/api/user", { method: "DELETE" });
+      const res = await authedFetch("/api/auth/user", { method: "DELETE" });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.message);
-      await endSession();
+      window.location.assign("/");
     } catch (err) {
       setError(err.message || "We couldn't delete your account. Please try again.");
       setDeleting(false);
@@ -34,19 +45,22 @@ export function AccountActions() {
   return (
     <div className="flex flex-col items-center gap-3 text-sm">
       {!confirming ? (
-        <div className="flex items-center gap-4 text-muted">
-          <button type="button" onClick={endSession} className="hover:text-foreground hover:underline">
-            Sign out
-          </button>
-          <span aria-hidden>·</span>
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            className="font-medium text-red-500 hover:underline"
-          >
-            Delete account
-          </button>
-        </div>
+        <>
+          <div className="flex items-center gap-4 text-muted">
+            <button type="button" onClick={handleSignOut} className="hover:text-foreground hover:underline">
+              Sign out
+            </button>
+            <span aria-hidden>·</span>
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              className="font-medium text-red-500 hover:underline"
+            >
+              Delete account
+            </button>
+          </div>
+          {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+        </>
       ) : (
         <div role="alertdialog" aria-labelledby="delete-title" className="w-full rounded-2xl border border-red-200 bg-red-50 p-4 text-center dark:border-red-900 dark:bg-red-950/40">
           <p id="delete-title" className="font-semibold text-red-700 dark:text-red-300">

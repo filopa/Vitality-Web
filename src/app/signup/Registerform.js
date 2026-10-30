@@ -1,22 +1,32 @@
 "use client";
 
+import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import {
   AtSign,
   CheckCircle2,
   Lock,
   Mail,
-  MapPinHouse,
-  Phone,
-  User,
   Mars,
+  Stethoscope,
+  User,
+  UserRound,
   Venus,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { useEffect, useRef, useState } from "react";
+import { useApp } from "@/lib/AppProvider";
+import { confirmBackendSession } from "@/lib/client/api";
 import { auth } from "@/lib/firebase";
+import {
+  formatLocalPhone,
+  getPhoneE164,
+  PHONE_VALIDATION_ERROR,
+} from "@/lib/phone";
+import { isValidUsername, USERNAME_ERROR_MESSAGE } from "@/lib/validations";
 import { InputField } from "../_components/Inputfield";
+import { CountryPhoneField } from "../_components/profile/CountryPhoneField";
+import { useSignupFlow } from "./SignupFlowProvider";
 
 // ─── Google Sign-in button ────────────────────────────────────────────────────
 
@@ -68,19 +78,115 @@ function OrDivider() {
 // ─── Main form ────────────────────────────────────────────────────────────────
 
 export function RegisterForm() {
-  const router = useRouter(); 
+  const router = useRouter();
+  const { refreshSession } = useApp();
+  const { setPendingSignup } = useSignupFlow();
   const [gender, setGender] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [serverError, setServerError] = useState("");
-
-  // Google connected user info: { uid, name, email, photoURL, idToken }
+  const [type, setType] = useState("user");
+  const [birthday, setBirthday] = useState("");
+  const [country, setCountry] = useState("");
+  const [phone, setPhone] = useState("");
   const [googleUser, setGoogleUser] = useState(null);
   const [nameValue, setNameValue] = useState("");
   const [emailValue, setEmailValue] = useState("");
+  const [username, setUsername] = useState("");
+  const [usernameStatus, setUsernameStatus] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [checkingUsername, setCheckingUsername] = useState(false);
+  const usernameRequestRef = useRef(0);
 
-  // ── Google Connect ────────────────────────────────────────────────────────
+  function handleCountryChange(nextCountry) {
+    const formattedPhone = formatLocalPhone(phone, nextCountry);
+    setCountry(nextCountry);
+    setPhone(formattedPhone);
+    setFieldErrors((previous) => ({
+      ...previous,
+      country: undefined,
+      phone:
+        formattedPhone && !getPhoneE164(formattedPhone, nextCountry)
+          ? PHONE_VALIDATION_ERROR
+          : undefined,
+    }));
+  }
+
+  function handlePhoneChange(nextPhone) {
+    setPhone(nextPhone);
+    if (!nextPhone || getPhoneE164(nextPhone, country)) {
+      setFieldErrors((previous) => ({ ...previous, phone: undefined }));
+    }
+  }
+
+  useEffect(() => {
+    const value = username.trim().toLowerCase();
+
+    if (!value) {
+      usernameRequestRef.current++;
+      setUsernameStatus(null);
+      setSuggestions([]);
+      setCheckingUsername(false);
+      return;
+    }
+
+    if (!isValidUsername(value)) {
+      usernameRequestRef.current++;
+      setUsernameStatus(null);
+      setSuggestions([]);
+      setCheckingUsername(false);
+      setFieldErrors((prev) => ({ ...prev, username: USERNAME_ERROR_MESSAGE }));
+      return;
+    }
+
+    setFieldErrors((prev) => ({ ...prev, username: undefined }));
+    setUsernameStatus(null);
+    setSuggestions([]);
+    setCheckingUsername(true);
+
+    const requestId = ++usernameRequestRef.current;
+
+    const timeout = setTimeout(async () => {
+      try {
+        const response = await fetch("/api/auth/username", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            username: value,
+            name: nameValue,
+            birthDate: birthday,
+          }),
+        });
+
+        const result = await response.json();
+
+        // Ignore outdated responses
+        if (requestId !== usernameRequestRef.current) return;
+
+        if (!response.ok) {
+          throw new Error(result.error || "Unable to check username");
+        }
+
+        setUsernameStatus(result.available);
+        setSuggestions(result.suggestions || []);
+      } catch (error) {
+        if (requestId !== usernameRequestRef.current) return;
+
+        setUsernameStatus("error");
+        console.error("Username check failed:", error);
+      } finally {
+        if (requestId === usernameRequestRef.current) {
+          setCheckingUsername(false);
+        }
+      }
+    }, 500);
+
+    return () => clearTimeout(timeout);
+  }, [username, nameValue, birthday]);
+
   async function handleGoogle() {
     setGoogleLoading(true);
     setServerError("");
@@ -101,7 +207,6 @@ export function RegisterForm() {
 
       setNameValue(user.displayName || "");
       setEmailValue(user.email || "");
-      router.push("/home"); 
       // Clear previous field errors
       setFieldErrors({});
     } catch (err) {
@@ -110,6 +215,13 @@ export function RegisterForm() {
         setServerError("Google connection failed. Please try again.");
       }
     } finally {
+      try {
+        await signOut(auth);
+      } catch (signOutError) {
+        console.error("Firebase sign-out failed:", signOutError);
+        setGoogleUser(null);
+        setServerError("Google sign-out failed. Please try again.");
+      }
       setGoogleLoading(false);
     }
   }
@@ -120,10 +232,10 @@ export function RegisterForm() {
     setEmailValue("");
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────
   async function handleSubmit(e) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
+    let destination = null;
 
     const errs = {};
     const name = (data.get("name") ?? nameValue).trim();
@@ -132,13 +244,26 @@ export function RegisterForm() {
     const password = data.get("password") ?? "";
     const confirmPassword = data.get("confirmPassword") ?? "";
     const terms = data.get("terms");
+    if (!isValidUsername(username)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        username: USERNAME_ERROR_MESSAGE,
+      }));
+      return;
+    }
 
+    if (checkingUsername || usernameStatus !== true) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        username: "Please enter an available username.",
+      }));
+      return;
+    }
     if (name.length < 2 || name.length > 50)
       errs.name = "Name must be 2–50 characters.";
 
-    if (!/^[a-z0-9_]{3,30}$/.test(username))
-      errs.username =
-        "Username: 3–30 chars, lowercase letters, numbers, or underscores only.";
+    if (!isValidUsername(username.toLowerCase()))
+      errs.username = USERNAME_ERROR_MESSAGE;
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       errs.email = "Enter a valid email address.";
@@ -158,6 +283,9 @@ export function RegisterForm() {
 
     if (!gender) errs.gender = "Please select your gender.";
     if (!terms) errs.terms = "You must accept the terms and conditions.";
+    const phoneE164 = phone ? getPhoneE164(phone, country) : "";
+    if (phone && !country) errs.country = "Select a country for your phone number.";
+    if (phone && country && !phoneE164) errs.phone = PHONE_VALIDATION_ERROR;
 
     setFieldErrors(errs);
     setServerError("");
@@ -169,9 +297,10 @@ export function RegisterForm() {
         name,
         username: username.toLowerCase(),
         email: email.toLowerCase(),
-        phone: (data.get("phone") ?? "").trim(),
-        country: (data.get("country") ?? "").trim(),
+        phone: phoneE164,
+        country,
         gender,
+        requestedType: type,
         birthday: data.get("birthday") ?? "",
       };
 
@@ -181,10 +310,39 @@ export function RegisterForm() {
         payload.idToken = googleUser.idToken;
       } else {
         payload.password = password;
+
+        const verificationResponse = await fetch(
+          "/api/auth/signup/request-code",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: payload.email }),
+          },
+        );
+        const verificationResult = await verificationResponse.json();
+        if (!verificationResponse.ok || !verificationResult.success) {
+          if (verificationResult.code === "EMAIL_EXISTS") {
+            setFieldErrors((previous) => ({
+              ...previous,
+              email: "This email is already registered.",
+            }));
+          } else {
+            setServerError(
+              verificationResult.message ??
+                "We couldn't send the verification code. Please try again.",
+            );
+          }
+          return;
+        }
+
+        setPendingSignup(payload);
+        router.push("/signup/check-code");
+        return;
       }
 
       const res = await fetch("/api/auth/signup", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -216,19 +374,36 @@ export function RegisterForm() {
         return;
       }
 
-      if (json.data?.idToken && typeof window !== "undefined") {
-        localStorage.setItem("vitality_token", json.data.idToken);
-        localStorage.setItem("vitality_user", JSON.stringify(json.data));
-        document.cookie = `vitality_token=${json.data.idToken}; path=/; max-age=604800; SameSite=Lax`;
+      await confirmBackendSession();
+      if (!(await refreshSession())) {
+        throw new Error("The server session could not be loaded.");
       }
 
-      router.push("/onboarding");
+      destination = "/home";
     } catch {
       setServerError(
         "Network error. Please check your connection and try again.",
       );
     } finally {
+      if (googleUser) {
+        await signOut(auth).catch(async (signOutError) => {
+          console.error("Firebase sign-out failed:", signOutError);
+          destination = null;
+          setServerError("Google sign-out failed. Please try again.");
+          await fetch("/api/auth/session", {
+            method: "DELETE",
+            credentials: "same-origin",
+          }).catch((logoutError) => {
+            console.error("Backend sign-out after Firebase failure failed:", logoutError);
+          });
+        });
+      }
       setSubmitting(false);
+    }
+
+    if (destination) {
+      router.push(destination);
+      router.refresh();
     }
   }
 
@@ -286,10 +461,63 @@ export function RegisterForm() {
         )}
 
         <div className="flex flex-col gap-4">
+
+          {/* Type */}
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase leading-4 tracking-[0.05em] text-muted">
+              Type
+            </span>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setType("user")}
+                aria-pressed={type === "user"}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
+                  type === "user"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted hover:border-primary"
+                }`}
+              >
+                <UserRound className="h-5 w-5" />
+                <span>User</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setType("doctor")}
+                aria-pressed={type === "doctor"}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
+                  type === "doctor"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted hover:border-primary"
+                }`}
+              >
+                <Stethoscope className="h-5 w-5" />
+                <span>Doctor</span>
+              </button>
+            </div>
+
+            <input type="hidden" name="type" value={type} />
+
+            {fieldErrors.type && (
+              <p role="alert" className="text-sm text-red-500">
+                {fieldErrors.type}
+              </p>
+            )}
+          </div>
+
+
+
           {/* Username */}
           <InputField
             label="Username"
             name="username"
+            value={username}
+            onChange={(e) => {
+              setUsername(e.target.value);
+              setFieldErrors((prev) => ({ ...prev, username: undefined }));
+            }}
             icon={<AtSign className="h-5 w-5" />}
             placeholder="Choose a username"
             autoComplete="username"
@@ -297,19 +525,58 @@ export function RegisterForm() {
             error={fieldErrors.username}
           />
 
+          <div className="mb-[-15px] text-sm">
+            {checkingUsername && (
+              <p className="text-gray-500">Checking username availability...</p>
+            )}
+
+            {!checkingUsername && usernameStatus === true && (
+              <p className="text-green-600">✓ Username is available</p>
+            )}
+
+            {!checkingUsername && usernameStatus === false && (
+              <div className="text-red-500">
+                <p>✕ Username is already taken.</p>
+
+                {suggestions.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {suggestions.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setUsername(item)}
+                        className="rounded-full border px-3 py-1 hover:bg-gray-100"
+                      >
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {usernameStatus === "error" && (
+              <p className="text-red-500">
+                Unable to verify username. Please try again.
+              </p>
+            )}
+          </div>
           {/* Name */}
           <InputField
             label="Name"
             name="name"
             value={nameValue}
-            onChange={(e) => setNameValue(e.target.value)}
+            onChange={(e) => {
+              setNameValue(e.target.value);
+              setUsernameStatus(null);
+              setSuggestions([]);
+            }}
             icon={<User className="h-5 w-5" />}
             placeholder="Enter your name"
             autoComplete="name"
             required
             error={fieldErrors.name}
           />
-
           {/* Email */}
           <InputField
             label="Email address"
@@ -325,23 +592,14 @@ export function RegisterForm() {
             error={fieldErrors.email}
           />
 
-          {/* Country */}
-          <InputField
-            label="Country"
-            name="country"
-            icon={<MapPinHouse className="h-5 w-5" />}
-            placeholder="Enter your country"
-            autoComplete="country"
-          />
-
-          {/* Phone */}
-          <InputField
-            label="Phone number"
-            name="phone"
-            type="tel"
-            icon={<Phone className="h-5 w-5" />}
-            placeholder="Enter your phone number"
-            autoComplete="tel"
+          <CountryPhoneField
+            idPrefix="signup"
+            country={country}
+            phone={phone}
+            onCountryChange={handleCountryChange}
+            onPhoneChange={handlePhoneChange}
+            countryError={fieldErrors.country}
+            phoneError={fieldErrors.phone}
           />
 
           {/* Gender */}
@@ -401,10 +659,15 @@ export function RegisterForm() {
               type="date"
               id="birthday"
               name="birthday"
+              value={birthday}
+              onChange={(e) => {
+                setBirthday(e.target.value);
+                setUsernameStatus(null);
+                setSuggestions([]);
+              }}
               className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-surface-foreground outline-none transition placeholder:text-muted/60 focus:border-primary focus:ring-4 focus:ring-primary/20"
             />
           </div>
-
           {/* Passwords only shown if not using Google */}
           {!googleUser && (
             <>

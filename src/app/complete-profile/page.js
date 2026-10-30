@@ -1,7 +1,7 @@
 import { AccountActions } from "../_components/profile/AccountActions";
 import { CompleteProfileForm } from "../_components/profile/CompleteProfileForm";
 import ThemeToggle from "../theme-toggle";
-
+import Image from "next/image";
 export const metadata = {
   title: { absolute: "Complete Your Profile | Vitality" },
   robots: { index: false, follow: false },
@@ -16,11 +16,23 @@ export default function CompleteProfilePage() {
 
       <div className="relative flex w-full max-w-[448px] flex-col gap-4">
         <header className="flex flex-col items-center gap-2 text-center">
-          <h1 className="text-[32px] font-bold leading-10 tracking-[-0.02em] md:text-4xl md:leading-[44px]">
+          <div className="relative size-[72px]">
+            <div className="absolute inset-[-22.22%_-27.78%_-33.33%_-27.78%]">
+              <Image
+                src="https://f003.backblazeb2.com/file/Video-Dolphin/android-icon-foreground.png"
+                alt="Vitality"
+                fill
+                sizes="112px"
+                className="max-w-none"
+                priority
+              />
+            </div>
+          </div>
+          <h1 className="pt-2 text-[32px] font-bold leading-10 tracking-[-0.02em] md:text-4xl md:leading-[44px]">
             Complete Your Profile
           </h1>
           <p className="text-base leading-6 text-muted">
-            We need a few more details before you can continue.
+           We need a few more details before you can continue.
           </p>
         </header>
 

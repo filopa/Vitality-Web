@@ -28,12 +28,18 @@ export function isValidName(name) {
 
 /**
  * Username:
- *  – lowercase letters, digits, underscore only
- *  – 3–30 characters
+ *  – 3–20 characters, starting with an English letter
+ *  – English letters, digits, and underscores only
  */
 export function isValidUsername(username) {
-  return /^[a-z0-9_]{3,30}$/.test(username);
+  return (
+    typeof username === "string" &&
+    /^[a-z][a-z0-9_]{2,19}$/.test(username.toLowerCase())
+  );
 }
+
+export const USERNAME_ERROR_MESSAGE =
+  "Username must be 3-20 characters, start with an English letter, and contain only English letters, numbers, and underscores.";
 
 /**
  * Map a Firebase Auth error code to the API contract error shape.
@@ -42,20 +48,50 @@ export function isValidUsername(username) {
 export function mapFirebaseAuthError(firebaseCode) {
   switch (firebaseCode) {
     case "auth/email-already-in-use":
-      return { status: 409, code: "EMAIL_EXISTS", message: "Email is already in use." };
+      return {
+        status: 409,
+        code: "EMAIL_EXISTS",
+        message: "Email is already in use.",
+      };
     case "auth/weak-password":
-      return { status: 400, code: "WEAK_PASSWORD", message: "Password is too weak." };
+      return {
+        status: 400,
+        code: "WEAK_PASSWORD",
+        message: "Password is too weak.",
+      };
     case "auth/invalid-credential":
     case "auth/wrong-password":
     case "auth/user-not-found":
     case "auth/invalid-email":
-      return { status: 401, code: "INVALID_CREDENTIALS", message: "Invalid email or password." };
+      return {
+        status: 401,
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password.",
+      };
     case "auth/too-many-requests":
-      return { status: 429, code: "TOO_MANY_REQUESTS", message: "Too many failed attempts. Please try again later." };
+      return {
+        status: 429,
+        code: "TOO_MANY_REQUESTS",
+        message: "Too many failed attempts. Please try again later.",
+      };
+    case "auth/user-disabled":
+      return {
+        status: 403,
+        code: "USER_DISABLED",
+        message: "This account has been disabled.",
+      };
     case "auth/invalid-id-token":
     case "auth/id-token-expired":
-      return { status: 401, code: "INVALID_TOKEN", message: "Authentication token is invalid or expired." };
+      return {
+        status: 401,
+        code: "INVALID_TOKEN",
+        message: "Authentication token is invalid or expired.",
+      };
     default:
-      return { status: 500, code: "INTERNAL_ERROR", message: "An unexpected error occurred." };
+      return {
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "An unexpected error occurred.",
+      };
   }
 }

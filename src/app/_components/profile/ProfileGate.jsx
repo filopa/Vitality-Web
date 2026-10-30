@@ -1,16 +1,27 @@
 "use client";
 
-import { onAuthStateChanged } from "firebase/auth";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { authedFetch } from "@/lib/client/api";
-import { auth } from "@/lib/firebase";
+import { useApp } from "@/lib/AppProvider";
 
 // Pages that never force the "complete your profile" step.
-const EXEMPT_PATHS = ["/", "/login", "/signup", "/register", "/terms", "/privacy", "/complete-profile"];
+const EXEMPT_PATHS = [
+  "/",
+  "/login",
+  "/signup",
+  "/register",
+  "/terms",
+  "/privacy",
+  "/complete-profile",
+];
 
 const isExempt = (pathname) =>
-  EXEMPT_PATHS.some((p) => (p === "/" ? pathname === "/" : pathname === p || pathname.startsWith(`${p}/`)));
+  EXEMPT_PATHS.some((p) =>
+    p === "/"
+      ? pathname === "/"
+      : pathname === p || pathname.startsWith(`${p}/`),
+  );
 
 /**
  * Renders nothing. Mount once in the root layout:
@@ -19,32 +30,45 @@ const isExempt = (pathname) =>
 export default function ProfileGate() {
   const pathname = usePathname();
   const router = useRouter();
+  const { user, loading } = useApp();
   const completedUid = useRef(null); // skip re-checking once we know the profile is complete
 
   useEffect(() => {
-    if (isExempt(pathname)) return;
+    if (isExempt(pathname) || loading) return;
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
 
     let cancelled = false;
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser || completedUid.current === firebaseUser.uid) return;
+    if (completedUid.current === user.uid) return;
 
+    (async () => {
       try {
         const res = await authedFetch("/api/auth/user/profile");
         const json = await res.json();
-        if (cancelled || !json.success) return;
+        if (cancelled) return;
+        if (res.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        if (!res.ok || !json.success) {
+          throw new Error(json.message ?? "Profile verification failed.");
+        }
 
-        if (json.data.profileComplete) completedUid.current = firebaseUser.uid;
+        if (json.data.profileComplete) completedUid.current = user.uid;
         else router.replace("/complete-profile");
-      } catch {
-        // Network problem: don't lock the user out.
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Profile verification failed:", error);
+        }
       }
-    });
+    })();
 
     return () => {
       cancelled = true;
-      unsubscribe();
     };
-  }, [pathname, router]);
+  }, [pathname, router, user, loading]);
 
   return null;
 }

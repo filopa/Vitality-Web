@@ -22,8 +22,11 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { confirmBackendSession } from "@/lib/client/api";
+import { useApp } from "@/lib/AppProvider";
+import { isValidUsername, USERNAME_ERROR_MESSAGE } from "@/lib/validations";
 import { InputField } from "../../_components/Inputfield";
 
 // ─── Google Sign-in button ────────────────────────────────────────────────────
@@ -166,6 +169,7 @@ function FileDropZone({ label, name, required = false, accept, hint, error }) {
 
 export function DoctorRegisterForm() {
   const router = useRouter();
+  const { refreshSession } = useApp();
   const formRef = useRef(null);
 
   // Slider step state: 1 (Personal & Account Info) or 2 (Verification Documents)
@@ -248,6 +252,13 @@ export function DoctorRegisterForm() {
         setServerError("Google connection failed. Please try again.");
       }
     } finally {
+      try {
+        await signOut(auth);
+      } catch (signOutError) {
+        console.error("Firebase sign-out failed:", signOutError);
+        setGoogleUser(null);
+        setServerError("Google sign-out failed. Please try again.");
+      }
       setGoogleLoading(false);
     }
   }
@@ -271,8 +282,8 @@ export function DoctorRegisterForm() {
       errs.name = "Name must be 2–50 characters.";
     }
 
-    if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-      errs.username = "Username: 3–30 chars, lowercase letters, numbers, or underscores only.";
+    if (!isValidUsername(username.toLowerCase())) {
+      errs.username = USERNAME_ERROR_MESSAGE;
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -333,6 +344,7 @@ export function DoctorRegisterForm() {
     e.preventDefault();
     if (!formRef.current) return;
     const data = new FormData(formRef.current);
+    let destination = null;
 
     // Validate step 1 again in case user edited
     const step1Errors = validateStep1(data);
@@ -392,11 +404,13 @@ export function DoctorRegisterForm() {
     if (googleUser) {
       data.set("googleUid", googleUser.uid);
       data.set("photoURL", googleUser.photoURL || "");
+      data.set("idToken", googleUser.idToken);
     }
 
     try {
       const res = await fetch("/api/auth/signup-doctor", {
         method: "POST",
+        credentials: "same-origin",
         body: data,
       });
 
@@ -419,17 +433,34 @@ export function DoctorRegisterForm() {
         return;
       }
 
-      if (json.data?.idToken && typeof window !== "undefined") {
-        localStorage.setItem("vitality_token", json.data.idToken);
-        localStorage.setItem("vitality_user", JSON.stringify(json.data));
-        document.cookie = `vitality_token=${json.data.idToken}; path=/; max-age=604800; SameSite=Lax`;
+      await confirmBackendSession();
+      if (!(await refreshSession())) {
+        throw new Error("The server session could not be loaded.");
       }
 
-      router.push("/signup/doctor/pending");
+      destination = "/signup/doctor/pending";
     } catch {
       setServerError("Network error. Please check your connection and try again.");
     } finally {
+      if (googleUser) {
+        await signOut(auth).catch(async (signOutError) => {
+          console.error("Firebase sign-out failed:", signOutError);
+          destination = null;
+          setServerError("Google sign-out failed. Please try again.");
+          await fetch("/api/auth/session", {
+            method: "DELETE",
+            credentials: "same-origin",
+          }).catch((logoutError) => {
+            console.error("Backend sign-out after Firebase failure failed:", logoutError);
+          });
+        });
+      }
       setSubmitting(false);
+    }
+
+    if (destination) {
+      router.push(destination);
+      router.refresh();
     }
   }
 

@@ -1,7 +1,10 @@
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { get, ref, update } from "firebase/database";
-import { auth, rtdb } from "@/lib/firebase";
+import { adminAuth, adminRTDB } from "@/lib/firebase-admin";
 import { mapFirebaseAuthError } from "@/lib/validations";
+import {
+  mapIdentityToolkitError,
+  requestIdentityToolkit,
+} from "@/lib/server/identity-toolkit";
+import { createSessionResponse } from "@/lib/server/session";
 
 // ─── POST /api/auth/signin ───────────────────────────────────────────────────
 
@@ -20,8 +23,8 @@ export async function POST(request) {
     );
   }
 
-  const email = (body?.email ?? "").trim();
-  const password = body?.password ?? "";
+  const email = typeof body?.email === "string" ? body.email.trim() : "";
+  const password = typeof body?.password === "string" ? body.password : "";
 
   // ── Validation: Check for required fields ─────────────────────────────────
   if (!email || !password) {
@@ -40,66 +43,94 @@ export async function POST(request) {
     );
   }
 
-  // ── Authenticate via Firebase Auth ───────────────────────────────────────
-  let userCredential;
+  let identityResult;
   try {
-    userCredential = await signInWithEmailAndPassword(
-      auth,
-      email.toLowerCase(),
-      password
-    );
+    identityResult = await requestIdentityToolkit("accounts:signInWithPassword", {
+      email: email.toLowerCase(),
+      password,
+      returnSecureToken: true,
+    });
   } catch (err) {
-    const mapped = mapFirebaseAuthError(err.code);
+    console.error("Firebase email sign-in request failed:", err);
     return Response.json(
       {
         success: false,
-        code: mapped.code,
-        message: mapped.message,
+        code: "AUTH_SERVICE_UNAVAILABLE",
+        message: "Sign-in is temporarily unavailable. Please try again.",
       },
-      { status: mapped.status }
+      { status: 503 },
     );
   }
 
-  const { user } = userCredential;
-  const idToken = await user.getIdToken();
-  const refreshToken = user.refreshToken || "";
+  if (!identityResult.ok) {
+    const mapped = mapFirebaseAuthError(
+      mapIdentityToolkitError(identityResult.code),
+    );
+    return Response.json(
+      { success: false, code: mapped.code, message: mapped.message },
+      { status: mapped.status },
+    );
+  }
+
+  const { idToken } = identityResult.data;
+  let decoded;
+  try {
+    decoded = await adminAuth.verifyIdToken(idToken, true);
+  } catch (err) {
+    console.error("Firebase returned an invalid sign-in token:", err);
+    return Response.json(
+      {
+        success: false,
+        code: "INVALID_TOKEN",
+        message: "Sign-in could not be verified. Please try again.",
+      },
+      { status: 401 },
+    );
+  }
 
   // ── Fetch user profile from RTDB to obtain role ──────────────────────────
   let role = "user";
   try {
-    const userRef = ref(rtdb, `users/${user.uid}`);
-    const snapshot = await get(userRef);
+    const userRef = adminRTDB.ref(`users/${decoded.uid}`);
+    const snapshot = await userRef.get();
 
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      role = data.type || "user";
-      // Update last seen
-      await update(userRef, { lastSeen: Date.now(), active: true }).catch(() => {});
+    if (!snapshot.exists()) {
+      return Response.json(
+        {
+          success: false,
+          code: "PROFILE_NOT_FOUND",
+          message: "We couldn't find your account profile. Please contact support.",
+        },
+        { status: 403 },
+      );
     }
+
+    const data = snapshot.val();
+    role = data.type || "user";
+    await userRef.update({ lastSeen: Date.now(), active: true });
   } catch (err) {
     console.error("RTDB user fetch error:", err);
+    return Response.json(
+      {
+        success: false,
+        code: "PROFILE_UNAVAILABLE",
+        message: "We couldn't load your account. Please try again.",
+      },
+      { status: 503 },
+    );
   }
 
-  // ── Set auth cookie in response header ───────────────────────────────────
-  const cookieHeader = `vitality_token=${idToken}; Path=/; Max-Age=604800; SameSite=Lax`;
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      data: {
-        uid: user.uid,
-        role,
-        idToken,
-        refreshToken,
+  try {
+    return await createSessionResponse(idToken, { role });
+  } catch (err) {
+    console.error("Firebase session creation failed:", err);
+    return Response.json(
+      {
+        success: false,
+        code: "SESSION_CREATION_FAILED",
+        message: "We couldn't create your session. Please try again.",
       },
-    }),
-    {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Set-Cookie": cookieHeader,
-      },
-    }
-  );
+      { status: 500 },
+    );
+  }
 }
-

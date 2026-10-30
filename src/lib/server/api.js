@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { adminAuth } from "@/lib/firebase-admin";
+import {
+  clearSessionCookie,
+  SESSION_COOKIE_NAME,
+} from "@/lib/server/session";
 
 export const ok = (data, status = 200) => NextResponse.json({ success: true, data }, { status });
 
@@ -8,13 +12,21 @@ export const fail = (status, code, message, extra = {}) =>
 
 /** Verifies the Bearer ID token. Returns { decoded } or { error: Response }. */
 export async function authenticate(request) {
-  const header = request.headers.get("authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  if (!token) return { error: fail(401, "UNAUTHORIZED", "Please sign in.") };
+  const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
+  if (!sessionCookie) {
+    return { error: fail(401, "UNAUTHORIZED", "Please sign in.") };
+  }
 
   try {
-    return { decoded: await adminAuth.verifyIdToken(token) };
+    return {
+      decoded: await adminAuth.verifySessionCookie(sessionCookie, true),
+    };
   } catch {
-    return { error: fail(401, "INVALID_TOKEN", "Your session has expired. Please sign in again.") };
+    const response = fail(
+      401,
+      "INVALID_SESSION",
+      "Your session has expired. Please sign in again.",
+    );
+    return { error: clearSessionCookie(response) };
   }
 }

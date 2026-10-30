@@ -27,11 +27,16 @@ export async function saveProfile(decoded, profile) {
   const existing = existingSnap.exists() ? existingSnap.val() : null;
   const now = new Date().toISOString();
 
-await userReference.update({
+  await userReference.update({
     ...profile,
     email: existing?.email ?? decoded.email ?? "",
     photoURL: existing?.photoURL ?? decoded.picture ?? "",
     avatarURL: existing?.photoURL ?? decoded.picture ?? "",
+    requestedType:
+      profile.requestedType ??
+      existing?.requestedType ??
+      decoded.requestedType ??
+      "user",
     termsAcceptedAt: now,
     updatedAt: now,
     ...(existing ? {} : { createdAt: now }),

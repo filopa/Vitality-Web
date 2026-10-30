@@ -4,8 +4,10 @@ import { Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { confirmBackendSession } from "@/lib/client/api";
+import { useApp } from "@/lib/AppProvider";
 import { InputField } from "../_components/Inputfield";
 
 // ─── Google Sign-in button ────────────────────────────────────────────────────
@@ -53,12 +55,28 @@ function OrDivider() {
   );
 }
 
+// ─── Redirect safety ──────────────────────────────────────────────────────────
+
+const DEFAULT_REDIRECT = "/home";
+
+/**
+ * Only same-site relative paths are allowed.
+ * Rejects: external URLs, protocol-relative "//host", backslashes ("/\host"),
+ * and control characters (browsers strip tabs/newlines, so "/\t/host" becomes "//host").
+ */
+function getSafeRedirect(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) return DEFAULT_REDIRECT;
+  if (value.startsWith("//") || /[\u0000-\u001F\u007F\\]/.test(value)) return DEFAULT_REDIRECT;
+  return value;
+}
+
 // ─── Login Form Component ─────────────────────────────────────────────────────
 
 export function LoginForm() {
   const router = useRouter();
+  const { refreshSession } = useApp();
   const searchParams = useSearchParams();
-  const redirectPath = searchParams.get("redirect") || "/feed";
+  const redirectPath = getSafeRedirect(searchParams.get("redirect"));
 
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -93,6 +111,7 @@ export function LoginForm() {
     try {
       const res = await fetch("/api/auth/signin", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.toLowerCase(), password }),
       });
@@ -113,11 +132,9 @@ export function LoginForm() {
         return;
       }
 
-      // Success: Save token & session
-      if (json.data?.idToken && typeof window !== "undefined") {
-        localStorage.setItem("vitality_token", json.data.idToken);
-        localStorage.setItem("vitality_user", JSON.stringify(json.data));
-        document.cookie = `vitality_token=${json.data.idToken}; path=/; max-age=604800; SameSite=Lax`;
+      await confirmBackendSession();
+      if (!(await refreshSession())) {
+        throw new Error("The server session could not be loaded.");
       }
 
       // Redirect to destination
@@ -131,9 +148,13 @@ export function LoginForm() {
   }
 
   // ── Google Sign In ────────────────────────────────────────────────────────
+  // Firebase is used ONLY to get the Google account data + ID token for the backend.
+  // Login succeeds only if the backend accepts it, and the Firebase session is always closed afterwards.
   async function handleGoogle() {
     setGoogleLoading(true);
     setServerError("");
+    let destination = null;
+
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
@@ -142,6 +163,7 @@ export function LoginForm() {
 
       const res = await fetch("/api/auth/google-signin", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           uid: user.uid,
@@ -158,25 +180,40 @@ export function LoginForm() {
         return;
       }
 
-      if (idToken && typeof window !== "undefined") {
-        localStorage.setItem("vitality_token", idToken);
-        localStorage.setItem("vitality_user", JSON.stringify(json.data));
-        document.cookie = `vitality_token=${idToken}; path=/; max-age=604800; SameSite=Lax`;
+      await confirmBackendSession();
+      if (!(await refreshSession())) {
+        throw new Error("The server session could not be loaded.");
       }
 
-      // New Google users go to onboarding; existing users go to feed/redirect
-      if (json.data.isNew) {
-        router.push("/onboarding");
-      } else {
-        router.push(redirectPath);
-      }
-      router.refresh();
+      // The server-issued HttpOnly cookie is verified before redirecting.
+      // New Google users go to home; existing users go to feed/redirect
+      destination = json.data?.isNew ? "/home" : redirectPath;
     } catch (err) {
-      if (err.code !== "auth/popup-closed-by-user") {
+      if (err?.code !== "auth/popup-closed-by-user") {
         setServerError("Google sign-in failed. Please try again.");
       }
     } finally {
+      // Always close the Firebase session, whether the attempt succeeded or failed.
+      try {
+        await signOut(auth);
+      } catch (signOutError) {
+        console.error("Firebase sign-out failed:", signOutError);
+        destination = null;
+        setServerError("Google sign-out failed. Please try again.");
+        await fetch("/api/auth/session", {
+          method: "DELETE",
+          credentials: "same-origin",
+        }).catch((logoutError) => {
+          console.error("Backend sign-out after Firebase failure failed:", logoutError);
+        });
+      }
+
       setGoogleLoading(false);
+
+      if (destination) {
+        router.push(destination);
+        router.refresh();
+      }
     }
   }
 
@@ -251,4 +288,3 @@ export function LoginForm() {
     </div>
   );
 }
-

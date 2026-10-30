@@ -7,7 +7,7 @@ export default function robots() {
         userAgent: "*",
         allow: "/",
         // Private / app-only routes
-        disallow: ["/api/", "/home", "/onboarding","/complete-profile"],
+        disallow: ["/api/", "/home", "/home","/complete-profile"],
       },
     ],
     sitemap: `${SITE.url}/sitemap.xml`,

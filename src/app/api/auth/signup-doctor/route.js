@@ -1,11 +1,15 @@
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { get, ref as dbRef, set } from "firebase/database";
-import { auth, rtdb } from "@/lib/firebase";
+import { adminAuth, adminRTDB } from "@/lib/firebase-admin";
+import {
+  mapIdentityToolkitError,
+  requestIdentityToolkit,
+} from "@/lib/server/identity-toolkit";
+import { createSessionResponse } from "@/lib/server/session";
 import {
   isValidEmail,
   isStrongPassword,
   isValidName,
   isValidUsername,
+  USERNAME_ERROR_MESSAGE,
   mapFirebaseAuthError,
 } from "@/lib/validations";
 
@@ -56,8 +60,32 @@ export async function POST(request) {
   const degreeDoc      =  formData.get("degreeDoc");       // File | null
   const googleUid      = (formData.get("googleUid")     ?? "").trim();
   const photoURL       = (formData.get("photoURL")      ?? "").trim();
+  const clientToken    = (formData.get("idToken")       ?? "").trim();
 
-  const isGoogleSignup = Boolean(googleUid);
+  const isGoogleSignup = Boolean(clientToken);
+  let googleClaims = null;
+  if (isGoogleSignup) {
+    try {
+      googleClaims = await adminAuth.verifyIdToken(clientToken, true);
+    } catch {
+      return Response.json(
+        { success: false, code: "INVALID_TOKEN", message: "Google sign-up could not be verified." },
+        { status: 401 },
+      );
+    }
+
+    if (
+      googleClaims.firebase?.sign_in_provider !== "google.com" ||
+      googleClaims.uid !== googleUid ||
+      googleClaims.email_verified !== true ||
+      googleClaims.email?.toLowerCase() !== email
+    ) {
+      return Response.json(
+        { success: false, code: "INVALID_GOOGLE_ACCOUNT", message: "Google account details could not be verified." },
+        { status: 401 },
+      );
+    }
+  }
 
   // ── Validation ─────────────────────────────────────────────────────────
   const errors = {};
@@ -78,8 +106,7 @@ export async function POST(request) {
   }
 
   if (!isValidUsername(username))
-    errors.username =
-      "Username must be 3–30 characters, lowercase, and contain only letters, numbers, or underscores.";
+    errors.username = USERNAME_ERROR_MESSAGE;
 
   if (!specialty || specialty.length < 2)
     errors.specialty = "Medical specialty is required.";
@@ -104,12 +131,11 @@ export async function POST(request) {
     );
   }
 
-  let finalUid = googleUid;
-  let finalToken = "";
+  let finalUid = googleClaims?.uid ?? "";
+  let finalToken = clientToken;
 
   if (isGoogleSignup) {
-    // Check if account already exists
-    const existingSnap = await get(dbRef(rtdb, `users/${googleUid}`));
+    const existingSnap = await adminRTDB.ref(`users/${finalUid}`).get();
     if (existingSnap.exists()) {
       return Response.json(
         {
@@ -121,22 +147,45 @@ export async function POST(request) {
       );
     }
   } else {
-    // ── Create Firebase Auth user for email/password ─────────────────────────
-    let userCredential;
+    let identityResult;
     try {
-      userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      identityResult = await requestIdentityToolkit("accounts:signUp", {
+        email,
+        password,
+        returnSecureToken: true,
+      });
     } catch (err) {
-      const mapped = mapFirebaseAuthError(err.code);
+      console.error("Firebase doctor account creation request failed:", err);
       return Response.json(
-        { success: false, code: mapped.code, message: mapped.message },
-        { status: mapped.status }
+        { success: false, code: "AUTH_SERVICE_UNAVAILABLE", message: "Sign-up is temporarily unavailable." },
+        { status: 503 },
       );
     }
 
-    const { user } = userCredential;
-    await updateProfile(user, { displayName: name });
-    finalUid = user.uid;
-    finalToken = await user.getIdToken();
+    if (!identityResult.ok) {
+      const mapped = mapFirebaseAuthError(
+        mapIdentityToolkitError(identityResult.code),
+      );
+      return Response.json(
+        { success: false, code: mapped.code, message: mapped.message },
+        { status: mapped.status },
+      );
+    }
+
+    finalUid = identityResult.data.localId;
+    finalToken = identityResult.data.idToken;
+    try {
+      await adminAuth.updateUser(finalUid, { displayName: name });
+    } catch (err) {
+      console.error("Firebase doctor account profile update failed:", err);
+      await adminAuth.deleteUser(finalUid).catch((deleteError) => {
+        console.error("Failed to roll back Firebase doctor account:", deleteError);
+      });
+      return Response.json(
+        { success: false, code: "ACCOUNT_SETUP_FAILED", message: "We couldn't finish creating your account." },
+        { status: 500 },
+      );
+    }
   }
 
   const now = Date.now();
@@ -153,8 +202,8 @@ export async function POST(request) {
     gender,
     birthday,
     bio: "",
-    photoURL: photoURL || "",
-    avatarURL: photoURL || "",
+    photoURL: googleClaims?.picture || photoURL || "",
+    avatarURL: googleClaims?.picture || photoURL || "",
     type: "doctor",
     active: true,
     verified: false, // admin flips this to true after review
@@ -198,38 +247,43 @@ export async function POST(request) {
 
   try {
     const writes = [
-      set(dbRef(rtdb, `users/${finalUid}`), doctorRecord),
-      set(dbRef(rtdb, `doctorCertificates/${finalUid}/${licenseCertId}`), licenseCert),
+      adminRTDB.ref(`users/${finalUid}`).set(doctorRecord),
+      adminRTDB.ref(`doctorCertificates/${finalUid}/${licenseCertId}`).set(licenseCert),
     ];
 
     if (degreeCert) {
-      writes.push(set(dbRef(rtdb, `doctorCertificates/${finalUid}/${degreeCertId}`), degreeCert));
+      writes.push(
+        adminRTDB
+          .ref(`doctorCertificates/${finalUid}/${degreeCertId}`)
+          .set(degreeCert),
+      );
     }
 
     await Promise.all(writes);
-  } catch (err) {
-    console.error("RTDB write error:", err);
-    if (!isGoogleSignup) {
-      await auth.currentUser?.delete().catch(() => {});
-    }
-    return Response.json(
-      { success: false, code: "INTERNAL_ERROR", message: "Failed to save doctor profile." },
-      { status: 500 }
-    );
-  }
-
-  return Response.json(
-    {
-      success: true,
-      data: {
-        uid: finalUid,
+    return await createSessionResponse(
+      finalToken,
+      {
         name,
         email,
         role: "doctor",
         verified: false,
-        idToken: finalToken,
       },
-    },
-    { status: 201 }
-  );
+      201,
+    );
+  } catch (err) {
+    console.error("RTDB write error:", err);
+    if (!isGoogleSignup) {
+      await Promise.all([
+        adminRTDB.ref(`users/${finalUid}`).remove(),
+        adminRTDB.ref(`doctorCertificates/${finalUid}`).remove(),
+        adminAuth.deleteUser(finalUid),
+      ]).catch((rollbackError) => {
+        console.error("Failed to roll back doctor signup:", rollbackError);
+      });
+    }
+    return Response.json(
+      { success: false, code: "SESSION_CREATION_FAILED", message: "We couldn't create your session. Please try again." },
+      { status: 500 },
+    );
+  }
 }

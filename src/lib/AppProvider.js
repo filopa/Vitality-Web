@@ -1,9 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth, rtdb } from "./firebase";
-import { onValue, ref } from "firebase/database";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { clearLegacyClientAuth } from "./client/session";
 
 const AppContext = createContext();
 
@@ -12,6 +16,35 @@ export const AppProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState(null);
   const THEME_STORAGE_KEY = "theme";
+
+  const refreshSession = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/auth/session", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.success || !result.data?.user?.uid) {
+        setUser(null);
+        setUserData(null);
+        return false;
+      }
+
+      setUser({ uid: result.data.user.uid });
+      setUserData(result.data.user);
+      return true;
+    } catch (error) {
+      console.error("Backend session check failed:", error);
+      setUser(null);
+      setUserData(null);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
     const initialTheme =
@@ -21,34 +54,27 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    // دي الشغلانة اللي بتشتغل في الخلفية طول ما التطبيق مفتوح
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
-    });
+    clearLegacyClientAuth();
+    refreshSession();
+  }, [refreshSession]);
 
-    // التنظيف عند إلغاء المكون
-    return () => unsubscribe();
-  }, []);
   useEffect(() => {
-    if (user) {
-      const userRef = ref(rtdb, `users/${user.uid}`);
-      const userData2 = onValue(userRef, (snapshot) => {
-        if (snapshot.exists()) {
-          setUserData((prevUser) => ({
-            ...prevUser,
-            ...snapshot.val(),
-          }));
-        }
-      });
-      () => {
-        userData2();
-      };
-    }
-  }, [user]);
+    const handleExpiredSession = () => {
+      setUser(null);
+      setUserData(null);
+      setLoading(false);
+    };
+
+    window.addEventListener("vitality:session-expired", handleExpiredSession);
+    return () =>
+      window.removeEventListener(
+        "vitality:session-expired",
+        handleExpiredSession,
+      );
+  }, []);
 
   return (
-    <AppContext.Provider value={{ user, loading, userData }}>
+    <AppContext.Provider value={{ user, loading, userData, refreshSession }}>
       {children}
     </AppContext.Provider>
   );

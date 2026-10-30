@@ -1,5 +1,5 @@
-import { ref, get, set, update } from "firebase/database";
-import { rtdb } from "@/lib/firebase";
+import { adminAuth, adminRTDB } from "@/lib/firebase-admin";
+import { createSessionResponse } from "@/lib/server/session";
 
 /**
  * POST /api/auth/google-signin
@@ -7,10 +7,10 @@ import { rtdb } from "@/lib/firebase";
  * Called after a successful client-side Google popup.
  * Body: { idToken, uid, name, email, photoURL }
  *
- * – If the user already exists in RTDB → update lastSeen only.
- * – If this is a new Google user → create a full RTDB record (type: "user").
+ * – Verifies the Google ID token before reading or writing user data.
+ * – Creates a Firebase session cookie only after storing the RTDB profile.
  *
- * Response 200: { success, data: { uid, name, email, role, isNew, idToken } }
+ * Response 200: { success, data: { uid, name, email, role, isNew } }
  */
 export async function POST(request) {
   let body;
@@ -23,34 +23,56 @@ export async function POST(request) {
     );
   }
 
-  const { uid, name, email, photoURL, idToken } = body;
-
-  if (!uid || !email) {
+  const { idToken } = body ?? {};
+  if (typeof idToken !== "string" || !idToken) {
     return Response.json(
-      { success: false, code: "VALIDATION_ERROR", message: "uid and email are required." },
-      { status: 400 }
+      { success: false, code: "VALIDATION_ERROR", message: "A Google ID token is required." },
+      { status: 400 },
     );
   }
 
-  const userRef = ref(rtdb, `users/${uid}`);
-  const snapshot = await get(userRef);
+  let decoded;
+  try {
+    decoded = await adminAuth.verifyIdToken(idToken, true);
+  } catch {
+    return Response.json(
+      { success: false, code: "INVALID_TOKEN", message: "Google sign-in could not be verified." },
+      { status: 401 },
+    );
+  }
+
+  if (
+    decoded.firebase?.sign_in_provider !== "google.com" ||
+    !decoded.email ||
+    decoded.email_verified !== true
+  ) {
+    return Response.json(
+      { success: false, code: "INVALID_PROVIDER", message: "A verified Google account is required." },
+      { status: 401 },
+    );
+  }
+
+  const uid = decoded.uid;
+  const name = decoded.name ?? "";
+  const email = decoded.email.toLowerCase();
+  const photoURL = decoded.picture ?? "";
+  const userRef = adminRTDB.ref(`users/${uid}`);
+  const snapshot = await userRef.get();
 
   let isNew = false;
   let role = "user";
 
   if (snapshot.exists()) {
-    // ── Returning user: just bump lastSeen ──────────────────────────────
     const existing = snapshot.val();
     role = existing.type ?? "user";
-    await update(userRef, { lastSeen: Date.now(), active: true });
+    await userRef.update({ lastSeen: Date.now(), active: true });
   } else {
-    // ── First-time Google user: create full record ───────────────────────
     isNew = true;
     const userRecord = {
       uid,
       name: name ?? "",
       email: email.toLowerCase(),
-      username: "", // user completes in onboarding
+      username: "", // user completes in home
       phone: "",
       country: "",
       gender: "",
@@ -63,29 +85,25 @@ export async function POST(request) {
       lastSeen: Date.now(),
       family: {},
     };
-    await set(userRef, userRecord);
+    await userRef.set(userRecord);
   }
 
-  const headers = { "Content-Type": "application/json" };
-  if (idToken) {
-    headers["Set-Cookie"] = `vitality_token=${idToken}; Path=/; Max-Age=604800; SameSite=Lax`;
-  }
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      data: {
-        uid,
-        name: name ?? "",
-        email: email.toLowerCase(),
-        role,
-        isNew,
-        idToken: idToken || "",
+  try {
+    return await createSessionResponse(idToken, {
+      name,
+      email,
+      role,
+      isNew,
+    });
+  } catch (err) {
+    console.error("Google session creation failed:", err);
+    return Response.json(
+      {
+        success: false,
+        code: "SESSION_CREATION_FAILED",
+        message: "We couldn't create your session. Please try again.",
       },
-    }),
-    {
-      status: 200,
-      headers,
-    }
-  );
+      { status: 500 },
+    );
+  }
 }
