@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { InputField } from "../Componnet/Inputfield";
+import { InputField } from "../_components/Inputfield";
 
 // ─── Google Sign-in button ────────────────────────────────────────────────────
 
@@ -57,7 +57,9 @@ function OrDivider() {
   return (
     <div className="flex items-center gap-3">
       <span className="h-px flex-1 bg-border" />
-      <span className="text-xs font-medium uppercase tracking-widest text-muted">or</span>
+      <span className="text-xs font-medium uppercase tracking-widest text-muted">
+        or
+      </span>
       <span className="h-px flex-1 bg-border" />
     </div>
   );
@@ -66,8 +68,7 @@ function OrDivider() {
 // ─── Main form ────────────────────────────────────────────────────────────────
 
 export function RegisterForm() {
-  const router = useRouter();
-
+  const router = useRouter(); 
   const [gender, setGender] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -94,15 +95,17 @@ export function RegisterForm() {
         name: user.displayName || "",
         email: user.email || "",
         photoURL: user.photoURL || "",
+        avatarURL: user.photoURL || "",
         idToken,
       });
 
       setNameValue(user.displayName || "");
       setEmailValue(user.email || "");
-
+      router.push("/home"); 
       // Clear previous field errors
       setFieldErrors({});
     } catch (err) {
+      console.log("Google error:", err.code, err.message);
       if (err.code !== "auth/popup-closed-by-user") {
         setServerError("Google connection failed. Please try again.");
       }
@@ -123,32 +126,38 @@ export function RegisterForm() {
     const data = new FormData(e.currentTarget);
 
     const errs = {};
-    const name            = (data.get("name")            ?? nameValue).trim();
-    const username        = (data.get("username")        ?? "").trim();
-    const email           = (data.get("email")           ?? emailValue).trim();
-    const password        =  data.get("password")         ?? "";
-    const confirmPassword =  data.get("confirmPassword")  ?? "";
-    const terms           =  data.get("terms");
+    const name = (data.get("name") ?? nameValue).trim();
+    const username = (data.get("username") ?? "").trim();
+    const email = (data.get("email") ?? emailValue).trim();
+    const password = data.get("password") ?? "";
+    const confirmPassword = data.get("confirmPassword") ?? "";
+    const terms = data.get("terms");
 
     if (name.length < 2 || name.length > 50)
       errs.name = "Name must be 2–50 characters.";
 
     if (!/^[a-z0-9_]{3,30}$/.test(username))
-      errs.username = "Username: 3–30 chars, lowercase letters, numbers, or underscores only.";
+      errs.username =
+        "Username: 3–30 chars, lowercase letters, numbers, or underscores only.";
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       errs.email = "Enter a valid email address.";
 
     if (!googleUser) {
-      if (password.length < 8 || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password))
-        errs.password = "Password must be 8+ characters with a number and a special character.";
+      if (
+        password.length < 8 ||
+        !/[0-9]/.test(password) ||
+        !/[^A-Za-z0-9]/.test(password)
+      )
+        errs.password =
+          "Password must be 8+ characters with a number and a special character.";
 
       if (password !== confirmPassword)
         errs.confirmPassword = "Passwords do not match.";
     }
 
     if (!gender) errs.gender = "Please select your gender.";
-    if (!terms)  errs.terms  = "You must accept the terms and conditions.";
+    if (!terms) errs.terms = "You must accept the terms and conditions.";
 
     setFieldErrors(errs);
     setServerError("");
@@ -160,10 +169,10 @@ export function RegisterForm() {
         name,
         username: username.toLowerCase(),
         email: email.toLowerCase(),
-        phone:    (data.get("phone")    ?? "").trim(),
-        country:  (data.get("country")  ?? "").trim(),
+        phone: (data.get("phone") ?? "").trim(),
+        country: (data.get("country") ?? "").trim(),
         gender,
-        birthday: data.get("birthday")  ?? "",
+        birthday: data.get("birthday") ?? "",
       };
 
       if (googleUser) {
@@ -186,13 +195,23 @@ export function RegisterForm() {
         if (json.code === "VALIDATION_ERROR" && json.errors) {
           setFieldErrors((p) => ({ ...p, ...json.errors }));
         } else if (json.code === "EMAIL_EXISTS") {
-          setFieldErrors((p) => ({ ...p, email: "This email is already registered." }));
+          setFieldErrors((p) => ({
+            ...p,
+            email: "This email is already registered.",
+          }));
         } else if (json.code === "WEAK_PASSWORD") {
-          setFieldErrors((p) => ({ ...p, password: "Password is too weak. Try a stronger one." }));
+          setFieldErrors((p) => ({
+            ...p,
+            password: "Password is too weak. Try a stronger one.",
+          }));
         } else if (json.code === "TOO_MANY_REQUESTS") {
-          setServerError("Too many attempts. Please wait a moment and try again.");
+          setServerError(
+            "Too many attempts. Please wait a moment and try again.",
+          );
         } else {
-          setServerError(json.message ?? "Something went wrong. Please try again.");
+          setServerError(
+            json.message ?? "Something went wrong. Please try again.",
+          );
         }
         return;
       }
@@ -205,7 +224,9 @@ export function RegisterForm() {
 
       router.push("/onboarding");
     } catch {
-      setServerError("Network error. Please check your connection and try again.");
+      setServerError(
+        "Network error. Please check your connection and try again.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -231,10 +252,14 @@ export function RegisterForm() {
             )}
             <div>
               <div className="flex items-center gap-1.5">
-                <p className="text-sm font-semibold text-foreground">{googleUser.name}</p>
+                <p className="text-sm font-semibold text-foreground">
+                  {googleUser.name}
+                </p>
                 <CheckCircle2 className="h-4 w-4 text-primary" />
               </div>
-              <p className="text-xs text-muted">{googleUser.email} • Connected with Google</p>
+              <p className="text-xs text-muted">
+                {googleUser.email} • Connected with Google
+              </p>
             </div>
           </div>
           <button
@@ -421,11 +446,17 @@ export function RegisterForm() {
               />
               <span className="text-sm leading-5 text-muted">
                 I agree to the{" "}
-                <a href="/terms" className="font-semibold text-primary hover:underline">
+                <a
+                  href="/terms"
+                  className="font-semibold text-primary hover:underline"
+                >
                   Terms of Service
                 </a>{" "}
                 and{" "}
-                <a href="/privacy" className="font-semibold text-primary hover:underline">
+                <a
+                  href="/privacy"
+                  className="font-semibold text-primary hover:underline"
+                >
                   Privacy Policy
                 </a>
                 .

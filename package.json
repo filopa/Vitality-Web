@@ -10,7 +10,9 @@
     "format": "biome format --write"
   },
   "dependencies": {
+    "dotenv": "^18.0.9",
     "firebase": "^13.1.0",
+    "firebase-admin": "^14.5.0",
     "firebase-tools": "^15.33.0",
     "lucide-react": "^1.64.0",
     "next": "^16.4.3",

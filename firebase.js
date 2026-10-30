@@ -1,6 +1,5 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, initializeAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -39,19 +38,7 @@ if (Platform.OS === 'web') {
   }
 }
 
-let db;
-if (getApps().length === 1) {
-  if (Platform.OS === 'web') {
-    db = getFirestore(app);
-  } else {
-    db = initializeFirestore(app, {
-      experimentalForceLongPolling: true,
-    });
-  }
-} else {
-  db = getFirestore(app);
-}
 const rtdb = getDatabase(app);
 const storage = getStorage(app);
 
-export { app, auth, db, rtdb, storage };
+export { app, auth, rtdb, storage };

@@ -153,8 +153,8 @@ export async function POST(request) {
     gender,
     birthday,
     bio: "",
-    urlAvatar: photoURL || "",
-    urlProfile: photoURL || "",
+    photoURL: photoURL || "",
+    avatarURL: photoURL || "",
     type: "doctor",
     active: true,
     verified: false, // admin flips this to true after review

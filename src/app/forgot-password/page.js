@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { InputField } from "../Componnet/Inputfield";
+import { InputField } from "../_components/Inputfield";
 import ThemeToggle from "../theme-toggle";
 
 export default function ForgotPasswordPage() {

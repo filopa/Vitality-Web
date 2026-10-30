@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { InputField } from "../Componnet/Inputfield";
+import { InputField } from "../_components/Inputfield";
 
 // ─── Google Sign-in button ────────────────────────────────────────────────────
 
