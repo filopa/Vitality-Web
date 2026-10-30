@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+git status#!/usr/bin/env bash
 # Run from the project root. Figma asset URLs expire after 7 days.
 set -euo pipefail
 DIR="public/images/dashboard"
