@@ -1,7 +1,9 @@
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
-import {AppProvider} from "@/lib/AppProvider";
+import { AppProvider } from "@/lib/AppProvider";
 import ProfileGate from "./_components/profile/ProfileGate";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -51,8 +53,11 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <AppProvider>{children}
-          <ProfileGate />
+        <AppProvider>
+          {children}
+          <Suspense fallback={null}>
+            <ProfileGate />
+          </Suspense>
         </AppProvider>
       </body>
     </html>

@@ -109,5 +109,23 @@ export function toPublicProfile(profile) {
     lastSeen: profile.lastSeen ?? null,
     type: profile.type ?? "user",
     createdAt: profile.createdAt ?? null,
+    specialty: profile.specialty ?? "",
+    licenseNumber: profile.licenseNumber ?? "",
+    licenseIssuer: profile.licenseIssuer ?? "",
+    licenseYear: profile.licenseYear ?? "",
+    licenseDoc: profile.licenseDoc ?? "",
+    licenseStatus:
+      profile.licenseStatus ?? (profile.verified ? "approved" : "padding"),
+    degreeTitle: profile.degreeTitle ?? "",
+    degreeIssuer: profile.degreeIssuer ?? "",
+    degreeYear: profile.degreeYear ?? "",
+    degreeDoc: profile.degreeDoc ?? "",
+    degreeStatus:
+      profile.degreeStatus ?? (profile.verified ? "approved" : "padding"),
+    verified: profile.verified ?? false,
+    verifiedAt: profile.verifiedAt ?? null,
+    certificates: Array.isArray(profile.certificates)
+      ? profile.certificates
+      : [],
   };
 }

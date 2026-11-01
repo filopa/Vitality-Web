@@ -5,12 +5,12 @@ import {
 } from "@/lib/server/identity-toolkit";
 import { createSessionResponse } from "@/lib/server/session";
 import {
-  isValidEmail,
   isStrongPassword,
+  isValidEmail,
   isValidName,
   isValidUsername,
-  USERNAME_ERROR_MESSAGE,
   mapFirebaseAuthError,
+  USERNAME_ERROR_MESSAGE,
 } from "@/lib/validations";
 
 // ─── POST /api/auth/signup-doctor ────────────────────────────────────────────
@@ -37,30 +37,34 @@ export async function POST(request) {
     formData = await request.formData();
   } catch {
     return Response.json(
-      { success: false, code: "VALIDATION_ERROR", message: "Expected multipart/form-data." },
-      { status: 400 }
+      {
+        success: false,
+        code: "VALIDATION_ERROR",
+        message: "Expected multipart/form-data.",
+      },
+      { status: 400 },
     );
   }
 
-  const name           = (formData.get("name")          ?? "").trim();
-  const email          = (formData.get("email")         ?? "").trim().toLowerCase();
-  const password       =  formData.get("password")      ?? "";
-  const username       = (formData.get("username")      ?? "").trim().toLowerCase();
-  const phone          = (formData.get("phone")         ?? "").trim();
-  const country        = (formData.get("country")       ?? "").trim();
-  const gender         = (formData.get("gender")        ?? "").trim();
-  const birthday       = (formData.get("birthday")      ?? "").trim();
-  const specialty      = (formData.get("specialty")     ?? "").trim();
-  const licenseNum     = (formData.get("licenseNumber") ?? "").trim();
-  const licenseIssuer  = (formData.get("licenseIssuer") ?? "").trim();
-  const licenseYear    =  parseInt(formData.get("licenseYear") ?? "0", 10);
-  const licenseDoc     =  formData.get("licenseDoc");      // File | null
-  const degreeIssuer   = (formData.get("degreeIssuer")  ?? "").trim();
-  const degreeYear     =  parseInt(formData.get("degreeYear")  ?? "0", 10);
-  const degreeDoc      =  formData.get("degreeDoc");       // File | null
-  const googleUid      = (formData.get("googleUid")     ?? "").trim();
-  const photoURL       = (formData.get("photoURL")      ?? "").trim();
-  const clientToken    = (formData.get("idToken")       ?? "").trim();
+  const name = (formData.get("name") ?? "").trim();
+  const email = (formData.get("email") ?? "").trim().toLowerCase();
+  const password = formData.get("password") ?? "";
+  const username = (formData.get("username") ?? "").trim().toLowerCase();
+  const phone = (formData.get("phone") ?? "").trim();
+  const country = (formData.get("country") ?? "").trim();
+  const gender = (formData.get("gender") ?? "").trim();
+  const birthday = (formData.get("birthday") ?? "").trim();
+  const specialty = (formData.get("specialty") ?? "").trim();
+  const licenseNum = (formData.get("licenseNumber") ?? "").trim();
+  const licenseIssuer = (formData.get("licenseIssuer") ?? "").trim();
+  const licenseYear = parseInt(formData.get("licenseYear") ?? "0", 10);
+  const licenseDoc = formData.get("licenseDoc"); // File | null
+  const degreeIssuer = (formData.get("degreeIssuer") ?? "").trim();
+  const degreeYear = parseInt(formData.get("degreeYear") ?? "0", 10);
+  const degreeDoc = formData.get("degreeDoc"); // File | null
+  const googleUid = (formData.get("googleUid") ?? "").trim();
+  const photoURL = (formData.get("photoURL") ?? "").trim();
+  const clientToken = (formData.get("idToken") ?? "").trim();
 
   const isGoogleSignup = Boolean(clientToken);
   let googleClaims = null;
@@ -69,7 +73,11 @@ export async function POST(request) {
       googleClaims = await adminAuth.verifyIdToken(clientToken, true);
     } catch {
       return Response.json(
-        { success: false, code: "INVALID_TOKEN", message: "Google sign-up could not be verified." },
+        {
+          success: false,
+          code: "INVALID_TOKEN",
+          message: "Google sign-up could not be verified.",
+        },
         { status: 401 },
       );
     }
@@ -81,7 +89,11 @@ export async function POST(request) {
       googleClaims.email?.toLowerCase() !== email
     ) {
       return Response.json(
-        { success: false, code: "INVALID_GOOGLE_ACCOUNT", message: "Google account details could not be verified." },
+        {
+          success: false,
+          code: "INVALID_GOOGLE_ACCOUNT",
+          message: "Google account details could not be verified.",
+        },
         { status: 401 },
       );
     }
@@ -93,8 +105,7 @@ export async function POST(request) {
   if (!isValidName(name))
     errors.name = "Name must be between 2 and 50 characters.";
 
-  if (!isValidEmail(email))
-    errors.email = "A valid email address is required.";
+  if (!isValidEmail(email)) errors.email = "A valid email address is required.";
 
   if (!isGoogleSignup) {
     if (!password) {
@@ -105,8 +116,7 @@ export async function POST(request) {
     }
   }
 
-  if (!isValidUsername(username))
-    errors.username = USERNAME_ERROR_MESSAGE;
+  if (!isValidUsername(username)) errors.username = USERNAME_ERROR_MESSAGE;
 
   if (!specialty || specialty.length < 2)
     errors.specialty = "Medical specialty is required.";
@@ -127,7 +137,7 @@ export async function POST(request) {
   if (Object.keys(errors).length > 0) {
     return Response.json(
       { success: false, code: "VALIDATION_ERROR", errors },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -141,9 +151,10 @@ export async function POST(request) {
         {
           success: false,
           code: "EMAIL_EXISTS",
-          message: "An account with this Google profile already exists. Please log in.",
+          message:
+            "An account with this Google profile already exists. Please log in.",
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
   } else {
@@ -157,7 +168,11 @@ export async function POST(request) {
     } catch (err) {
       console.error("Firebase doctor account creation request failed:", err);
       return Response.json(
-        { success: false, code: "AUTH_SERVICE_UNAVAILABLE", message: "Sign-up is temporarily unavailable." },
+        {
+          success: false,
+          code: "AUTH_SERVICE_UNAVAILABLE",
+          message: "Sign-up is temporarily unavailable.",
+        },
         { status: 503 },
       );
     }
@@ -179,16 +194,36 @@ export async function POST(request) {
     } catch (err) {
       console.error("Firebase doctor account profile update failed:", err);
       await adminAuth.deleteUser(finalUid).catch((deleteError) => {
-        console.error("Failed to roll back Firebase doctor account:", deleteError);
+        console.error(
+          "Failed to roll back Firebase doctor account:",
+          deleteError,
+        );
       });
       return Response.json(
-        { success: false, code: "ACCOUNT_SETUP_FAILED", message: "We couldn't finish creating your account." },
+        {
+          success: false,
+          code: "ACCOUNT_SETUP_FAILED",
+          message: "We couldn't finish creating your account.",
+        },
         { status: 500 },
       );
     }
   }
 
   const now = Date.now();
+  const degreeTitle = (formData.get("degreeTitle") || "Medical Degree")
+    .trim()
+    .slice(0, 150);
+  const licenseCertId = crypto.randomUUID();
+  const licenseTitle = (
+    formData.get("licenseTitle") || `Medical License – ${specialty}`
+  )
+    .trim()
+    .slice(0, 150);
+  const degreeCertId =
+    degreeDoc instanceof File && degreeDoc.size > 0
+      ? crypto.randomUUID()
+      : null;
 
   // ── Write RTDB records ────────────────────────────────────────────────────
   // 1) users/{uid} — doctor profile
@@ -212,11 +247,16 @@ export async function POST(request) {
     family: {},
     specialty,
     licenseNumber: licenseNum,
+    licenseIssuer,
+    licenseYear,
+    licenseDoc: licenseDoc instanceof File ? licenseDoc.name : "",
+    degreeTitle: degreeTitle || "",
+    degreeIssuer: degreeIssuer || "",
+    degreeYear: degreeYear || 0,
+    degreeDoc: degreeDoc instanceof File ? degreeDoc.name : "",
   };
 
   // 2) doctorCertificates/{uid}/{certId} — one record per document directly in RTDB
-  const licenseCertId = crypto.randomUUID();
-  const licenseTitle = (formData.get("licenseTitle") || `Medical License – ${specialty}`).trim().slice(0, 150);
   const licenseCert = {
     certId: licenseCertId,
     uid: finalUid,
@@ -229,8 +269,6 @@ export async function POST(request) {
     createdAt: now,
   };
 
-  const degreeCertId = (degreeDoc instanceof File && degreeDoc.size > 0) ? crypto.randomUUID() : null;
-  const degreeTitle = (formData.get("degreeTitle") || "Medical Degree").trim().slice(0, 150);
   const degreeCert = degreeCertId
     ? {
         certId: degreeCertId,
@@ -248,7 +286,9 @@ export async function POST(request) {
   try {
     const writes = [
       adminRTDB.ref(`users/${finalUid}`).set(doctorRecord),
-      adminRTDB.ref(`doctorCertificates/${finalUid}/${licenseCertId}`).set(licenseCert),
+      adminRTDB
+        .ref(`doctorCertificates/${finalUid}/${licenseCertId}`)
+        .set(licenseCert),
     ];
 
     if (degreeCert) {
@@ -282,7 +322,11 @@ export async function POST(request) {
       });
     }
     return Response.json(
-      { success: false, code: "SESSION_CREATION_FAILED", message: "We couldn't create your session. Please try again." },
+      {
+        success: false,
+        code: "SESSION_CREATION_FAILED",
+        message: "We couldn't create your session. Please try again.",
+      },
       { status: 500 },
     );
   }

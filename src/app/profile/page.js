@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import ProfileView from "./ProfileView";
 
 export const metadata = {
@@ -8,5 +9,9 @@ export const metadata = {
 };
 
 export default function ProfilePage() {
-  return <ProfileView />;
+  return (
+    <Suspense fallback={null}>
+      <ProfileView />
+    </Suspense>
+  );
 }

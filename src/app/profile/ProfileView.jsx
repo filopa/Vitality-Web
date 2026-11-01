@@ -3,13 +3,22 @@
 import {
   Activity,
   AlertCircle,
+  Award,
   Bell,
   BriefcaseMedical,
+  Building2,
   Calendar,
   Camera,
+  Check,
   CheckCircle2,
   ChevronRight,
+  Clock,
+  Copy,
   Droplet,
+  ExternalLink,
+  FileCheck,
+  FileText,
+  GraduationCap,
   Heart,
   Link2,
   Lock,
@@ -22,11 +31,15 @@ import {
   RefreshCw,
   Ruler,
   Scale,
+  Share2,
   ShieldCheck,
   Sparkles,
+  Stethoscope,
   Trash2,
   Upload,
   User,
+  UserPlus,
+  Users,
   X,
 } from "lucide-react";
 import Image from "next/image";
@@ -94,6 +107,155 @@ function calculateAge(birthdayStr) {
   return age;
 }
 
+function formatMemberDate(timestamp) {
+  if (!timestamp) return null;
+  const d = new Date(timestamp);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+// ─── File drop zone for doctor document uploads ──────────────────────────────
+function FileDropZone({
+  label,
+  required = false,
+  accept = ".pdf,.jpg,.jpeg,.png",
+  hint = "PDF, JPG, or PNG — max 10 MB",
+  currentFileName = "",
+  file = null,
+  onFileChange,
+  error = "",
+}) {
+  const inputRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+
+  const displayFileName = file ? file.name : currentFileName;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs font-semibold uppercase leading-4 tracking-[0.05em] text-muted">
+        {label}
+        {required && <span className="ml-1 text-red-500">*</span>}
+      </span>
+
+      {/* biome-ignore lint/a11y/useSemanticElements: file drop zone container with nested clear button */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => e.key === "Enter" && inputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const dropped = e.dataTransfer.files?.[0];
+          if (dropped) onFileChange(dropped);
+        }}
+        className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition ${
+          dragging
+            ? "border-primary bg-primary/5"
+            : error
+              ? "border-red-400 bg-red-50 dark:bg-red-950/20"
+              : displayFileName
+                ? "border-primary/50 bg-primary/5"
+                : "border-border bg-surface hover:border-primary/50"
+        }`}
+      >
+        {displayFileName ? (
+          <>
+            <FileText className="h-6 w-6 text-primary" />
+            <span className="max-w-[220px] truncate text-xs font-medium text-surface-foreground font-mono">
+              {displayFileName}
+            </span>
+            <span className="text-[10px] font-semibold text-primary">
+              Click or drop to replace document
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFileChange(null);
+                if (inputRef.current) inputRef.current.value = "";
+              }}
+              className="absolute right-2 top-2 rounded-full p-1 text-muted hover:text-red-500"
+              aria-label="Remove file"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </>
+        ) : (
+          <>
+            <Upload className="h-6 w-6 text-muted" />
+            <span className="text-xs text-muted">
+              <span className="font-semibold text-primary">
+                Click to upload
+              </span>{" "}
+              or drag & drop
+            </span>
+            {hint && <span className="text-[11px] text-muted">{hint}</span>}
+          </>
+        )}
+      </div>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="sr-only"
+        onChange={(e) => {
+          const picked = e.target.files?.[0];
+          if (picked) onFileChange(picked);
+        }}
+      />
+
+      {error && (
+        <p role="alert" className="text-xs text-red-500">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const RELATIONSHIP_LABELS = {
+  parent: {
+    label: "Parent",
+    reciprocal: "Child",
+    color: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
+  },
+  child: {
+    label: "Child",
+    reciprocal: "Parent",
+    color:
+      "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+  },
+  sibling: {
+    label: "Sibling",
+    reciprocal: "Sibling",
+    color:
+      "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+  },
+  spouse: {
+    label: "Spouse",
+    reciprocal: "Spouse",
+    color: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+  },
+  grandparent: {
+    label: "Grandparent",
+    reciprocal: "Grandchild",
+    color:
+      "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+  },
+  grandchild: {
+    label: "Grandchild",
+    reciprocal: "Grandparent",
+    color: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+  },
+};
+
 export default function ProfileView() {
   const { userData, refreshSession } = useApp();
   const fileInputRef = useRef(null);
@@ -101,7 +263,7 @@ export default function ProfileView() {
   // Profile data state matching RTDB schema (automatically using Google photo if available)
   const [profile, setProfile] = useState({
     uid: userData?.uid || "",
-    name: userData?.name || "Patient",
+    name: userData?.name || "User",
     username: userData?.username || "",
     email: userData?.email || "",
     phone: userData?.phone || "",
@@ -110,6 +272,20 @@ export default function ProfileView() {
     birthday: userData?.birthday || "",
     bio: userData?.bio || "",
     type: userData?.type || "user",
+    specialty: userData?.specialty || "",
+    licenseNumber: userData?.licenseNumber || "",
+    licenseIssuer: userData?.licenseIssuer || "",
+    licenseYear: userData?.licenseYear || "",
+    licenseDoc: userData?.licenseDoc || "",
+    licenseStatus: userData?.licenseStatus || "padding",
+    degreeTitle: userData?.degreeTitle || "",
+    degreeIssuer: userData?.degreeIssuer || "",
+    degreeYear: userData?.degreeYear || "",
+    degreeDoc: userData?.degreeDoc || "",
+    degreeStatus: userData?.degreeStatus || "padding",
+    verified: userData?.verified || false,
+    certificates: userData?.certificates || [],
+    family: userData?.family || {},
     avatarUrl:
       userData?.urlProfile ||
       userData?.photoURL ||
@@ -117,31 +293,44 @@ export default function ProfileView() {
       userData?.urlAvatar ||
       auth.currentUser?.photoURL ||
       "",
-    memberSince: userData?.createdAt
-      ? new Date(userData.createdAt).toLocaleDateString("en-US", {
-          month: "long",
-          year: "numeric",
-        })
-      : "October 2021",
+    memberSince:
+      formatMemberDate(userData?.createdAt) ||
+      formatMemberDate(auth.currentUser?.metadata?.creationTime) ||
+      "",
   });
 
-  // Health Metrics / Vitals State
+  // Track whether real vitals were entered by the user
+  const [hasVitals, setHasVitals] = useState(
+    Boolean(
+      userData?.vitals && (userData.vitals.height || userData.vitals.weight),
+    ),
+  );
+
+  // Track whether real credentials were provided for doctor
+  const [hasDoctorCredentials, setHasDoctorCredentials] = useState(
+    Boolean(
+      userData?.licenseNumber &&
+        (userData?.licenseIssuer ||
+          userData?.specialty ||
+          userData?.licenseDoc),
+    ),
+  );
+
+  // Health Metrics / Vitals State (default example values shown when empty)
   const [vitals, setVitals] = useState({
-    height: userData?.vitals?.height || 172,
-    weight: userData?.vitals?.weight || 64.5,
-    bloodType: userData?.vitals?.bloodType || "A+",
+    height: userData?.vitals?.height || null,
+    weight: userData?.vitals?.weight || null,
+    bloodType: userData?.vitals?.bloodType || "",
     bloodRh: userData?.vitals?.bloodRh || "POS",
-    lastSynced: userData?.vitals?.lastSynced || "Today, 10:42 AM",
+    lastSynced: userData?.vitals?.lastSynced || null,
   });
 
   // Emergency Contact State
   const [emergencyContact, setEmergencyContact] = useState({
-    name: userData?.emergencyContact?.name || "James Richardson",
-    relationship: userData?.emergencyContact?.relationship || "Spouse",
-    phone: userData?.emergencyContact?.phone || "+1 (555) 012-3456",
-    notes:
-      userData?.emergencyContact?.notes ||
-      "Primary health proxy and medical decision surrogate",
+    name: userData?.emergencyContact?.name || "",
+    relationship: userData?.emergencyContact?.relationship || "",
+    phone: userData?.emergencyContact?.phone || "",
+    notes: userData?.emergencyContact?.notes || "",
   });
 
   // Integrations state
@@ -173,12 +362,22 @@ export default function ProfileView() {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isEditVitalsOpen, setIsEditVitalsOpen] = useState(false);
   const [isEditEmergencyOpen, setIsEditEmergencyOpen] = useState(false);
+  const [isEditCredentialsOpen, setIsEditCredentialsOpen] = useState(false);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isAddFamilyOpen, setIsAddFamilyOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingVitals, setSavingVitals] = useState(false);
   const [savingEmergency, setSavingEmergency] = useState(false);
+  const [savingCredentials, setSavingCredentials] = useState(false);
+  const [addingFamily, setAddingFamily] = useState(false);
+  const [removingFamilyId, setRemovingFamilyId] = useState(null);
+  const [familyUsername, setFamilyUsername] = useState("");
+  const [familyType, setFamilyType] = useState("parent");
+  const [familyError, setFamilyError] = useState("");
   const [photoActionLoading, setPhotoActionLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -187,8 +386,26 @@ export default function ProfileView() {
 
   // Temporary edit states
   const [tempProfile, setTempProfile] = useState(profile);
-  const [tempVitals, setTempVitals] = useState(vitals);
+  const [tempVitals, setTempVitals] = useState({
+    height: vitals.height || 172,
+    weight: vitals.weight || 64.5,
+    bloodType: vitals.bloodType || "A+",
+    bloodRh: vitals.bloodRh || "POS",
+  });
   const [tempEmergency, setTempEmergency] = useState(emergencyContact);
+  const [tempCredentials, setTempCredentials] = useState({
+    specialty: profile.specialty || "",
+    licenseNumber: profile.licenseNumber || "",
+    licenseIssuer: profile.licenseIssuer || "",
+    licenseYear: profile.licenseYear || "",
+    licenseDoc: profile.licenseDoc || "",
+    degreeTitle: profile.degreeTitle || "",
+    degreeIssuer: profile.degreeIssuer || "",
+    degreeYear: profile.degreeYear || "",
+    degreeDoc: profile.degreeDoc || "",
+  });
+  const [tempLicenseFile, setTempLicenseFile] = useState(null);
+  const [tempDegreeFile, setTempDegreeFile] = useState(null);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -198,6 +415,17 @@ export default function ProfileView() {
   // Sync state whenever userData updates from AppProvider
   useEffect(() => {
     if (userData) {
+      const userHasVitals = Boolean(
+        userData.vitals && (userData.vitals.height || userData.vitals.weight),
+      );
+      setHasVitals(userHasVitals);
+
+      const doctorHasCreds = Boolean(
+        userData.licenseNumber &&
+          (userData.licenseIssuer || userData.specialty || userData.licenseDoc),
+      );
+      setHasDoctorCredentials(doctorHasCreds);
+
       setProfile((prev) => ({
         ...prev,
         uid: userData.uid || prev.uid,
@@ -210,6 +438,20 @@ export default function ProfileView() {
         birthday: userData.birthday || prev.birthday,
         bio: userData.bio || prev.bio,
         type: userData.type || prev.type,
+        specialty: userData.specialty || prev.specialty,
+        licenseNumber: userData.licenseNumber || prev.licenseNumber,
+        licenseIssuer: userData.licenseIssuer || prev.licenseIssuer,
+        licenseYear: userData.licenseYear || prev.licenseYear,
+        licenseDoc: userData.licenseDoc || prev.licenseDoc,
+        licenseStatus: userData.licenseStatus || prev.licenseStatus,
+        degreeTitle: userData.degreeTitle || prev.degreeTitle,
+        degreeIssuer: userData.degreeIssuer || prev.degreeIssuer,
+        degreeYear: userData.degreeYear || prev.degreeYear,
+        degreeDoc: userData.degreeDoc || prev.degreeDoc,
+        degreeStatus: userData.degreeStatus || prev.degreeStatus,
+        verified: userData.verified ?? prev.verified,
+        certificates: userData.certificates || prev.certificates,
+        family: userData.family || prev.family || {},
         avatarUrl:
           userData.urlProfile ||
           userData.photoURL ||
@@ -244,9 +486,19 @@ export default function ProfileView() {
         if (cancelled) return;
         if (res.ok && json.success && json.data?.profile) {
           const p = json.data.profile;
+          const userHasVitals = Boolean(
+            p.vitals && (p.vitals.height || p.vitals.weight),
+          );
+          setHasVitals(userHasVitals);
+
+          const doctorHasCreds = Boolean(
+            p.licenseNumber && (p.licenseIssuer || p.specialty || p.licenseDoc),
+          );
+          setHasDoctorCredentials(doctorHasCreds);
+
           setProfile({
             uid: p.uid || "",
-            name: p.name || "Patient",
+            name: p.name || "User",
             username: p.username || "",
             email: p.email || "",
             phone: p.phone || "",
@@ -255,6 +507,20 @@ export default function ProfileView() {
             birthday: p.birthday || "",
             bio: p.bio || "",
             type: p.type || "user",
+            specialty: p.specialty || "",
+            licenseNumber: p.licenseNumber || "",
+            licenseIssuer: p.licenseIssuer || "",
+            licenseYear: p.licenseYear || "",
+            licenseDoc: p.licenseDoc || "",
+            licenseStatus: p.licenseStatus || "padding",
+            degreeTitle: p.degreeTitle || "",
+            degreeIssuer: p.degreeIssuer || "",
+            degreeYear: p.degreeYear || "",
+            degreeDoc: p.degreeDoc || "",
+            degreeStatus: p.degreeStatus || "padding",
+            verified: p.verified || false,
+            certificates: Array.isArray(p.certificates) ? p.certificates : [],
+            family: p.family || {},
             avatarUrl:
               p.urlProfile ||
               p.photoURL ||
@@ -262,12 +528,10 @@ export default function ProfileView() {
               p.urlAvatar ||
               auth.currentUser?.photoURL ||
               "",
-            memberSince: p.createdAt
-              ? new Date(p.createdAt).toLocaleDateString("en-US", {
-                  month: "long",
-                  year: "numeric",
-                })
-              : "October 2021",
+            memberSince:
+              formatMemberDate(p.createdAt) ||
+              formatMemberDate(auth.currentUser?.metadata?.creationTime) ||
+              "",
           });
           if (p.vitals) setVitals(p.vitals);
           if (p.emergencyContact) setEmergencyContact(p.emergencyContact);
@@ -282,12 +546,15 @@ export default function ProfileView() {
     };
   }, []);
 
-  // BMI calculation
-  const currentHeight = vitals.height || 172;
-  const currentWeight = vitals.weight || 64.5;
+  const isDoctor =
+    profile.type === "doctor" || profile.requestedType === "doctor";
+
+  // BMI calculation (uses real values if saved, else example 172cm / 64.5kg)
+  const displayHeight = hasVitals ? vitals.height : 172;
+  const displayWeight = hasVitals ? vitals.weight : 64.5;
   const bmi = (
-    currentWeight /
-    ((currentHeight / 100) * (currentHeight / 100))
+    displayWeight /
+    ((displayHeight / 100) * (displayHeight / 100))
   ).toFixed(1);
 
   const getBmiStatus = (bmiValue) => {
@@ -299,10 +566,10 @@ export default function ProfileView() {
   };
 
   const bmiStatus = getBmiStatus(bmi);
-  const heightInInches = currentHeight / 2.54;
+  const heightInInches = displayHeight / 2.54;
   const feet = Math.floor(heightInInches / 12);
   const inches = Math.round(heightInInches % 12);
-  const weightLbs = (currentWeight * 2.20462).toFixed(1);
+  const weightLbs = (displayWeight * 2.20462).toFixed(1);
   const userAge = calculateAge(profile.birthday);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
@@ -322,6 +589,7 @@ export default function ProfileView() {
         gender: tempProfile.gender,
         birthday: tempProfile.birthday,
         bio: tempProfile.bio.trim(),
+        type: tempProfile.type,
       };
 
       const res = await authedFetch("/api/auth/user/profile", {
@@ -377,6 +645,7 @@ export default function ProfileView() {
       }
 
       setVitals(payload.vitals);
+      setHasVitals(true);
       await refreshSession();
       setIsEditVitalsOpen(false);
       showToast("Vitals saved to database!");
@@ -503,13 +772,247 @@ export default function ProfileView() {
     }
   };
 
+  const publicIdentifier = profile.username || profile.uid || "";
+  const publicProfilePath = `/profile/${publicIdentifier}`;
+
+  const handleCopyPublicLink = async () => {
+    try {
+      const fullUrl = `${window.location.origin}${publicProfilePath}`;
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedLink(true);
+      showToast("Profile link copied to clipboard!");
+      setTimeout(() => setCopiedLink(false), 2500);
+    } catch {
+      showToast("Failed to copy link.");
+    }
+  };
+
+  const handleShareProfile = async () => {
+    const fullUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}${publicProfilePath}`
+        : publicProfilePath;
+    const shareTitle = isDoctor
+      ? `Dr. ${profile.name}'s Medical Profile | Vitality`
+      : `${profile.name}'s Health Profile | Vitality`;
+
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: shareTitle,
+          text: `View ${profile.name}'s verified profile on Vitality Health:`,
+          url: fullUrl,
+        });
+        return;
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setIsShareModalOpen(true);
+        }
+        return;
+      }
+    }
+    setIsShareModalOpen(true);
+  };
+
+  // Save Doctor Credentials (specialty, license, degree fields)
+  const handleSaveCredentials = async (e) => {
+    e.preventDefault();
+    setFormError("");
+    setSavingCredentials(true);
+    const currentYear = new Date().getFullYear();
+
+    // Client-side validation
+    if (
+      !tempCredentials.specialty ||
+      tempCredentials.specialty.trim().length < 2
+    ) {
+      setFormError("Medical specialty is required (min 2 characters).");
+      setSavingCredentials(false);
+      return;
+    }
+    if (
+      !tempCredentials.licenseNumber ||
+      tempCredentials.licenseNumber.trim().length < 3
+    ) {
+      setFormError("License number is required (min 3 characters).");
+      setSavingCredentials(false);
+      return;
+    }
+    if (
+      !tempCredentials.licenseIssuer ||
+      tempCredentials.licenseIssuer.trim().length < 2
+    ) {
+      setFormError("Issuing institution is required (min 2 characters).");
+      setSavingCredentials(false);
+      return;
+    }
+    const parsedLicYear = parseInt(tempCredentials.licenseYear, 10);
+    if (!parsedLicYear || parsedLicYear < 1950 || parsedLicYear > currentYear) {
+      setFormError(
+        `License issue year must be between 1950 and ${currentYear}.`,
+      );
+      setSavingCredentials(false);
+      return;
+    }
+    const licenseDocName = tempLicenseFile
+      ? tempLicenseFile.name
+      : (tempCredentials.licenseDoc || "").trim();
+    if (!licenseDocName) {
+      setFormError(
+        "A license document is required. Please upload your document.",
+      );
+      setSavingCredentials(false);
+      return;
+    }
+
+    const degreeDocName = tempDegreeFile
+      ? tempDegreeFile.name
+      : (tempCredentials.degreeDoc || "").trim();
+
+    if (tempCredentials.degreeYear) {
+      const parsedDegYear = parseInt(tempCredentials.degreeYear, 10);
+      if (parsedDegYear < 1950 || parsedDegYear > currentYear) {
+        setFormError(
+          `Graduation year must be between 1950 and ${currentYear}.`,
+        );
+        setSavingCredentials(false);
+        return;
+      }
+    }
+
+    try {
+      const payload = {
+        specialty: tempCredentials.specialty.trim(),
+        licenseNumber: tempCredentials.licenseNumber.trim(),
+        licenseIssuer: tempCredentials.licenseIssuer.trim(),
+        licenseYear: parsedLicYear,
+        licenseDoc: licenseDocName,
+        ...(tempCredentials.degreeTitle?.trim() && {
+          degreeTitle: tempCredentials.degreeTitle.trim(),
+        }),
+        ...(tempCredentials.degreeIssuer?.trim() && {
+          degreeIssuer: tempCredentials.degreeIssuer.trim(),
+        }),
+        ...(tempCredentials.degreeYear && {
+          degreeYear: parseInt(tempCredentials.degreeYear, 10),
+        }),
+        ...(degreeDocName && {
+          degreeDoc: degreeDocName,
+        }),
+      };
+
+      const res = await authedFetch("/api/auth/user/profile", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || "Failed to save credentials.");
+      }
+
+      // Update local profile state with saved values + re-read certificates from response
+      const updatedProfile = json.data?.profile;
+      setProfile((prev) => ({
+        ...prev,
+        specialty: payload.specialty,
+        licenseNumber: payload.licenseNumber,
+        licenseIssuer: payload.licenseIssuer,
+        licenseYear: payload.licenseYear,
+        licenseDoc: payload.licenseDoc,
+        degreeTitle: payload.degreeTitle || prev.degreeTitle,
+        degreeIssuer: payload.degreeIssuer || prev.degreeIssuer,
+        degreeYear: payload.degreeYear || prev.degreeYear,
+        degreeDoc: payload.degreeDoc || prev.degreeDoc,
+        certificates: Array.isArray(updatedProfile?.certificates)
+          ? updatedProfile.certificates
+          : prev.certificates,
+      }));
+      setHasDoctorCredentials(true);
+      await refreshSession();
+      setIsEditCredentialsOpen(false);
+      showToast("Doctor credentials updated in RTDB!");
+    } catch (err) {
+      setFormError(err.message || "Could not save credentials.");
+    } finally {
+      setSavingCredentials(false);
+    }
+  };
+
+  // Family Member Management (reciprocal relationships in RTDB)
+  const handleAddFamilyMember = async (e) => {
+    if (e) e.preventDefault();
+    setFamilyError("");
+    const cleanUser = familyUsername.trim().replace(/^@/, "").toLowerCase();
+    if (!cleanUser) {
+      setFamilyError("Please enter a username to link.");
+      return;
+    }
+    if (cleanUser === profile.username?.toLowerCase()) {
+      setFamilyError("You cannot add yourself as a family member.");
+      return;
+    }
+    setAddingFamily(true);
+    try {
+      const res = await authedFetch("/api/auth/user/family", {
+        method: "POST",
+        body: JSON.stringify({
+          username: cleanUser,
+          type: familyType,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || "Failed to link family member.");
+      }
+      const updatedFamily = json.data?.family || {};
+      setProfile((prev) => ({ ...prev, family: updatedFamily }));
+      setFamilyUsername("");
+      setIsAddFamilyOpen(false);
+      showToast("Family member linked successfully!");
+      await refreshSession();
+    } catch (err) {
+      setFamilyError(err.message || "Could not link family member.");
+    } finally {
+      setAddingFamily(false);
+    }
+  };
+
+  const handleRemoveFamilyMember = async (targetUid) => {
+    if (!targetUid) return;
+    setRemovingFamilyId(targetUid);
+    try {
+      const res = await authedFetch(
+        `/api/auth/user/family?targetUid=${targetUid}`,
+        {
+          method: "DELETE",
+        },
+      );
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || "Failed to remove family member.");
+      }
+      const updatedFamily = json.data?.family || {};
+      setProfile((prev) => ({ ...prev, family: updatedFamily }));
+      showToast("Family member removed.");
+      await refreshSession();
+    } catch (err) {
+      showToast(err.message || "Could not remove family member.");
+    } finally {
+      setRemovingFamilyId(null);
+    }
+  };
+
   const handleManualSync = () => {
     setIsSyncing(true);
     setTimeout(() => {
       setIsSyncing(false);
       setVitals((v) => ({ ...v, lastSynced: "Just now" }));
-      showToast("Synced telemetry from Apple Health & Fitbit Pro!");
-    }, 1200);
+      showToast(
+        isDoctor
+          ? "Medical credentials synchronized with RTDB registry!"
+          : "Synced telemetry from Apple Health & Fitbit Pro!",
+      );
+    }, 1000);
   };
 
   const handleSignOut = async () => {
@@ -542,27 +1045,45 @@ export default function ProfileView() {
           {/* Brand & Breadcrumb */}
           <div className="flex items-center gap-3">
             <div className="relative flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Sparkles className="size-5" />
+              {isDoctor ? (
+                <Stethoscope className="size-5" />
+              ) : (
+                <Sparkles className="size-5" />
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  Vitals & Health Profile
+                  {isDoctor
+                    ? "Doctor Clinical Profile"
+                    : "Vitals & Health Profile"}
                 </h1>
                 <span className="hidden items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 sm:inline-flex">
                   <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                  Live Sync
+                  {isDoctor ? "Doctor Portal" : "Live Sync"}
                 </span>
               </div>
               <p className="text-xs text-muted">
-                Personal medical record, biometric telemetry, and account
-                settings
+                {isDoctor
+                  ? "Medical certificates, clinical licensing, and doctor credentials"
+                  : "Personal medical record, biometric telemetry, and account settings"}
               </p>
             </div>
           </div>
 
           {/* Quick Header Actions */}
           <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleShareProfile}
+              className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary shadow-sm transition hover:bg-primary hover:text-white"
+              title="Share Public Profile"
+            >
+              <Share2 className="size-3.5" />
+              <span className="hidden sm:inline">Share Profile</span>
+              <span className="sm:hidden">Share</span>
+            </button>
+
             <button
               type="button"
               onClick={handleManualSync}
@@ -572,7 +1093,13 @@ export default function ProfileView() {
               <RefreshCw
                 className={`size-3.5 text-primary ${isSyncing ? "animate-spin" : ""}`}
               />
-              <span>{isSyncing ? "Syncing…" : "Sync Vitals"}</span>
+              <span>
+                {isSyncing
+                  ? "Syncing…"
+                  : isDoctor
+                    ? "Refresh Licensure"
+                    : "Sync Vitals"}
+              </span>
             </button>
 
             <ThemeToggle showLabel={false} />
@@ -606,13 +1133,18 @@ export default function ProfileView() {
             {/* Identity Card */}
             <div className={`overflow-hidden ${GLASS_CARD}`}>
               {/* Decorative Cover Gradient */}
-              <div className="relative h-28 w-full bg-gradient-to-r from-cyan-500/20 via-primary/25 to-blue-600/20 dark:from-cyan-900/30 dark:via-primary/20 dark:to-blue-900/30">
+              <div
+                className={`relative h-28 w-full bg-gradient-to-r ${
+                  isDoctor
+                    ? "from-blue-600/25 via-primary/25 to-indigo-600/25 dark:from-blue-900/40 dark:via-primary/20 dark:to-indigo-900/40"
+                    : "from-cyan-500/20 via-primary/25 to-blue-600/20 dark:from-cyan-900/30 dark:via-primary/20 dark:to-blue-900/30"
+                }`}
+              >
                 <div className="absolute right-4 top-4">
                   <span className="rounded-full bg-surface/80 px-2.5 py-1 text-[11px] font-semibold text-primary backdrop-blur-md">
-                    UID #
-                    {profile.uid
-                      ? profile.uid.slice(0, 8).toUpperCase()
-                      : "VT-USER"}
+                    {isDoctor
+                      ? `Doctor ID #${profile.uid ? profile.uid.slice(0, 8).toUpperCase() : "DR-771"}`
+                      : `UID #${profile.uid ? profile.uid.slice(0, 8).toUpperCase() : "VT-USER"}`}
                   </span>
                 </div>
               </div>
@@ -652,7 +1184,9 @@ export default function ProfileView() {
 
                 {/* Name & Subtitle */}
                 <h2 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  {profile.name}
+                  {isDoctor && !profile.name.toLowerCase().startsWith("dr")
+                    ? `Dr. ${profile.name}`
+                    : profile.name}
                 </h2>
                 {profile.username && (
                   <p className="text-xs font-semibold text-primary">
@@ -664,11 +1198,16 @@ export default function ProfileView() {
                   Member since {profile.memberSince}
                 </p>
 
-                {/* Patient tags */}
+                {/* Tags */}
                 <div className="mt-3.5 flex flex-wrap justify-center gap-1.5">
                   <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground capitalize">
-                    {profile.type}
+                    {isDoctor ? "Licensed Doctor" : profile.type}
                   </span>
+                  {profile.specialty && isDoctor && (
+                    <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                      {profile.specialty}
+                    </span>
+                  )}
                   {profile.gender && (
                     <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground capitalize">
                       {profile.gender}
@@ -679,9 +1218,21 @@ export default function ProfileView() {
                       {userAge} yrs
                     </span>
                   )}
-                  <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                    Active
-                  </span>
+                  {isDoctor ? (
+                    profile.verified ? (
+                      <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                        Board Verified ✓
+                      </span>
+                    ) : (
+                      <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                        Pending Review
+                      </span>
+                    )
+                  ) : (
+                    <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      Active
+                    </span>
+                  )}
                 </div>
 
                 {/* Bio (if available) */}
@@ -717,21 +1268,38 @@ export default function ProfileView() {
                     <MapPin className="size-3.5 shrink-0 text-primary" />
                     <span>{profile.country || "Country not set"}</span>
                   </div>
+                  {isDoctor && profile.licenseNumber && (
+                    <div className="flex items-center gap-2 border-t border-border/50 pt-1.5 text-foreground font-medium">
+                      <FileCheck className="size-3.5 shrink-0 text-primary" />
+                      <span>Lic: {profile.licenseNumber}</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Action button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTempProfile(profile);
-                    setFormError("");
-                    setIsEditProfileOpen(true);
-                  }}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary hover:text-white"
-                >
-                  <Pencil className="size-3.5" />
-                  Edit Profile Info
-                </button>
+                {/* Action buttons */}
+                <div className="mt-4 flex w-full flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempProfile(profile);
+                      setFormError("");
+                      setIsEditProfileOpen(true);
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary hover:text-white"
+                  >
+                    <Pencil className="size-3.5" />
+                    Edit Profile Info
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleShareProfile}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface py-2.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent hover:border-primary/40"
+                  >
+                    <Share2 className="size-3.5 text-primary" />
+                    Share Public Profile
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -743,7 +1311,9 @@ export default function ProfileView() {
                     <BriefcaseMedical className="size-4" />
                   </span>
                   <h3 className="text-base font-bold text-foreground">
-                    Emergency Contact
+                    {isDoctor
+                      ? "Practice Emergency Contact"
+                      : "Emergency Contact"}
                   </h3>
                 </div>
                 <button
@@ -755,7 +1325,7 @@ export default function ProfileView() {
                   }}
                   className="text-xs font-bold text-primary hover:underline"
                 >
-                  Edit
+                  {emergencyContact.name ? "Edit" : "+ Add"}
                 </button>
               </div>
 
@@ -766,11 +1336,13 @@ export default function ProfileView() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <h4 className="truncate text-sm font-bold text-foreground">
-                    {emergencyContact.name || "Add contact name"}
+                    {emergencyContact.name || "No emergency contact set"}
                   </h4>
                   <p className="mt-0.5 truncate text-xs text-muted">
-                    {emergencyContact.relationship || "Relationship"} •{" "}
-                    {emergencyContact.phone || "Phone number"}
+                    {emergencyContact.relationship
+                      ? `${emergencyContact.relationship} • `
+                      : ""}
+                    {emergencyContact.phone || "Click edit to add phone"}
                   </p>
                 </div>
               </div>
@@ -781,22 +1353,26 @@ export default function ProfileView() {
                 </p>
               )}
 
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <a
-                  href={`tel:${emergencyContact.phone.replace(/[^0-9+]/g, "")}`}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent"
-                >
-                  <Phone className="size-3.5 text-emerald-500" />
-                  Call Contact
-                </a>
-                <button
-                  type="button"
-                  onClick={() => showToast("Emergency SOS broadcast prepared.")}
-                  className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-500 hover:text-white dark:text-rose-400"
-                >
-                  ICE Alert
-                </button>
-              </div>
+              {emergencyContact.phone && (
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <a
+                    href={`tel:${emergencyContact.phone.replace(/[^0-9+]/g, "")}`}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent"
+                  >
+                    <Phone className="size-3.5 text-emerald-500" />
+                    Call Contact
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      showToast("Emergency SOS broadcast prepared.")
+                    }
+                    className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-500 hover:text-white dark:text-rose-400"
+                  >
+                    ICE Alert
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Sign Out Card */}
@@ -816,128 +1392,713 @@ export default function ProfileView() {
             </div>
           </div>
 
-          {/* ================= RIGHT COLUMN: Vitals, Settings & Integrations ================= */}
+          {/* ================= RIGHT COLUMN ================= */}
           <div className="flex flex-col gap-6 lg:col-span-8">
-            {/* 1. HEALTH METRICS / VITALS SECTION */}
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-bold tracking-tight text-foreground sm:text-xl">
-                    Health Metrics & Vitals
-                  </h3>
-                  <p className="text-xs text-muted">
-                    Continuous biometric stream • Synced {vitals.lastSynced}
-                  </p>
+            {/* IF TYPE === DOCTOR: SHOW DOCTOR CERTIFICATES INSTEAD OF HEALTH VITALS */}
+            {isDoctor ? (
+              <div className="flex flex-col gap-4">
+                {/* Section header */}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold tracking-tight text-foreground sm:text-xl flex items-center gap-2">
+                      <Award className="size-5 text-primary" />
+                      Doctor Credentials & Medical Certificates
+                    </h3>
+                    <p className="text-xs text-muted">
+                      {hasDoctorCredentials
+                        ? "Professional verification data from your registration — stored in Vitality RTDB"
+                        : "Credentials are not configured yet • Showing reference examples below"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
+                        hasDoctorCredentials
+                          ? profile.verified
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                            : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                          : "bg-muted/20 text-muted border border-border"
+                      }`}
+                    >
+                      {hasDoctorCredentials ? (
+                        profile.verified ? (
+                          <>
+                            <CheckCircle2 className="size-3.5" />
+                            Board Verified
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="size-3.5 animate-pulse" />
+                            Under Review
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <AlertCircle className="size-3.5" />
+                          Not Submitted
+                        </>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTempCredentials({
+                          specialty: profile.specialty || "",
+                          licenseNumber: profile.licenseNumber || "",
+                          licenseIssuer: profile.licenseIssuer || "",
+                          licenseYear: profile.licenseYear || "",
+                          licenseDoc: profile.licenseDoc || "",
+                          degreeTitle: profile.degreeTitle || "",
+                          degreeIssuer: profile.degreeIssuer || "",
+                          degreeYear: profile.degreeYear || "",
+                          degreeDoc: profile.degreeDoc || "",
+                        });
+                        setTempLicenseFile(null);
+                        setTempDegreeFile(null);
+                        setFormError("");
+                        setIsEditCredentialsOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white"
+                    >
+                      {hasDoctorCredentials ? (
+                        <>
+                          <Pencil className="size-3.5" />
+                          Edit Credentials
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="size-3.5" />
+                          Enter Verification Details
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTempVitals(vitals);
-                    setFormError("");
-                    setIsEditVitalsOpen(true);
-                  }}
-                  className="flex items-center gap-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white"
-                >
-                  <Pencil className="size-3" />
-                  Update Vitals
-                </button>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {hasDoctorCredentials ? (
+                    <>
+                      {/* REAL LICENSE CARD */}
+                      <div
+                        className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-3">
+                              <div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary border border-primary/20">
+                                <FileCheck className="size-6" />
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-bold text-foreground">
+                                  Medical License –{" "}
+                                  {profile.specialty || "Specialty"}
+                                </h4>
+                                <p className="text-xs text-muted">
+                                  {profile.licenseIssuer ||
+                                    "Issuing Institution"}
+                                </p>
+                              </div>
+                            </div>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                profile.licenseStatus === "approved" ||
+                                profile.verified
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                  : profile.licenseStatus === "rejected"
+                                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                              }`}
+                            >
+                              {profile.licenseStatus === "approved" ||
+                              profile.verified
+                                ? "Approved"
+                                : profile.licenseStatus === "rejected"
+                                  ? "Rejected"
+                                  : "Under Review"}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 space-y-1.5 rounded-xl bg-background/50 p-3 text-xs text-muted">
+                            <div className="flex justify-between">
+                              <span>License No.:</span>
+                              <span className="font-semibold text-foreground font-mono">
+                                {profile.licenseNumber || "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Issue Year:</span>
+                              <span className="font-semibold text-foreground">
+                                {profile.licenseYear || "—"}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Specialty:</span>
+                              <span className="font-semibold text-foreground">
+                                {profile.specialty || "—"}
+                              </span>
+                            </div>
+                            {profile.licenseDoc && (
+                              <div className="flex justify-between items-center gap-2">
+                                <span>Document:</span>
+                                <span className="truncate max-w-[150px] font-mono text-[11px] text-primary bg-primary/5 px-2 py-0.5 rounded border border-primary/20">
+                                  {profile.licenseDoc}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                          <span className="text-[11px] text-muted">
+                            License Credential
+                          </span>
+                          <span className="font-semibold text-primary">
+                            {profile.licenseStatus === "approved" ||
+                            profile.verified
+                              ? "Verified Record"
+                              : "Pending Approval"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* REAL DEGREE CARD (or empty placeholder if not set) */}
+                      {profile.degreeTitle ||
+                      profile.degreeIssuer ||
+                      profile.degreeYear ||
+                      profile.degreeDoc ? (
+                        <div
+                          className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
+                        >
+                          <div>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-3">
+                                <div className="grid size-11 place-items-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                                  <GraduationCap className="size-6" />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-bold text-foreground">
+                                    {profile.degreeTitle || "Medical Degree"}
+                                  </h4>
+                                  <p className="text-xs text-muted">
+                                    {profile.degreeIssuer ||
+                                      "University / Institution"}
+                                  </p>
+                                </div>
+                              </div>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                  profile.degreeStatus === "approved" ||
+                                  profile.verified
+                                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                    : profile.degreeStatus === "rejected"
+                                      ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                }`}
+                              >
+                                {profile.degreeStatus === "approved" ||
+                                profile.verified
+                                  ? "Approved"
+                                  : profile.degreeStatus === "rejected"
+                                    ? "Rejected"
+                                    : "Under Review"}
+                              </span>
+                            </div>
+
+                            <div className="mt-4 space-y-1.5 rounded-xl bg-background/50 p-3 text-xs text-muted">
+                              {profile.degreeYear && (
+                                <div className="flex justify-between">
+                                  <span>Graduation Year:</span>
+                                  <span className="font-semibold text-foreground">
+                                    {profile.degreeYear}
+                                  </span>
+                                </div>
+                              )}
+                              {profile.degreeIssuer && (
+                                <div className="flex justify-between">
+                                  <span>University:</span>
+                                  <span className="font-semibold text-foreground">
+                                    {profile.degreeIssuer}
+                                  </span>
+                                </div>
+                              )}
+                              {profile.degreeDoc && (
+                                <div className="flex justify-between items-center gap-2">
+                                  <span>Document:</span>
+                                  <span className="truncate max-w-[150px] font-mono text-[11px] text-primary bg-primary/5 px-2 py-0.5 rounded border border-primary/20">
+                                    {profile.degreeDoc}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                            <span className="text-[11px] text-muted">
+                              Academic Credential
+                            </span>
+                            <span className="font-semibold text-primary">
+                              {profile.degreeStatus === "approved" ||
+                              profile.verified
+                                ? "Verified Record"
+                                : "Pending Approval"}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={`flex flex-col items-center justify-center p-6 text-center ${GLASS_CARD} border-dashed opacity-75`}
+                        >
+                          <GraduationCap className="size-10 text-muted mb-2" />
+                          <p className="text-sm font-semibold text-foreground">
+                            No Degree Document on File
+                          </p>
+                          <p className="text-xs text-muted mt-1 max-w-[220px]">
+                            Medical degree or diploma is optional. You can add
+                            it anytime via Edit Credentials.
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* REFERENCE EXAMPLE 1: Medical Practice License */}
+                      <div
+                        className={`flex flex-col justify-between p-5 ${GLASS_CARD} relative overflow-hidden border-dashed`}
+                      >
+                        <div className="absolute right-3 top-3">
+                          <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
+                            Reference Example
+                          </span>
+                        </div>
+                        <div>
+                          <div className="flex items-start gap-3">
+                            <div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary border border-primary/20">
+                              <FileCheck className="size-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-bold text-foreground">
+                                Medical Practice License (Example)
+                              </h4>
+                              <p className="text-xs text-muted">
+                                State Medical Licensing Authority
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 space-y-1.5 rounded-xl bg-background/50 p-3 text-xs text-muted">
+                            <div className="flex justify-between">
+                              <span>License No.:</span>
+                              <span className="font-semibold text-foreground font-mono">
+                                MD-984201
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Issue Year:</span>
+                              <span className="font-semibold text-foreground">
+                                2021
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Specialty:</span>
+                              <span className="font-semibold text-foreground">
+                                Cardiology
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Sample Doc:</span>
+                              <span className="font-mono text-[11px] text-primary">
+                                medical_license_sample.pdf
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                          <span className="text-[11px] text-muted">
+                            License Credential
+                          </span>
+                          <span className="font-semibold text-amber-500">
+                            Action Required
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* REFERENCE EXAMPLE 2: Medical Degree */}
+                      <div
+                        className={`flex flex-col justify-between p-5 ${GLASS_CARD} relative overflow-hidden border-dashed`}
+                      >
+                        <div className="absolute right-3 top-3">
+                          <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
+                            Reference Example
+                          </span>
+                        </div>
+                        <div>
+                          <div className="flex items-start gap-3">
+                            <div className="grid size-11 place-items-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                              <GraduationCap className="size-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-bold text-foreground">
+                                Doctor of Medicine (M.D.) (Example)
+                              </h4>
+                              <p className="text-xs text-muted">
+                                Faculty of Medicine & Surgery
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 space-y-1.5 rounded-xl bg-background/50 p-3 text-xs text-muted">
+                            <div className="flex justify-between">
+                              <span>Degree Title:</span>
+                              <span className="font-semibold text-foreground">
+                                Bachelor of Medicine & Surgery (MBBCh)
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Graduation Year:</span>
+                              <span className="font-semibold text-foreground">
+                                2018
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Sample Diploma:</span>
+                              <span className="font-mono text-[11px] text-primary">
+                                medical_degree_sample.pdf
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                          <span className="text-[11px] text-muted">
+                            Academic Credential
+                          </span>
+                          <span className="font-semibold text-amber-500">
+                            Action Required
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-
-              {/* 3 Metric Cards matching Mobile Screen (HEIGHT, WEIGHT, BLOOD TYPE) */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                {/* HEIGHT CARD */}
-                <div
-                  className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                      HEIGHT
-                    </span>
-                    <div className="grid size-8 place-items-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                      <Ruler className="size-4" />
-                    </div>
+            ) : (
+              /* IF TYPE === USER: HEALTH METRICS / VITALS SECTION */
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold tracking-tight text-foreground sm:text-xl">
+                      Health Metrics & Vitals
+                    </h3>
+                    <p className="text-xs text-muted">
+                      {hasVitals
+                        ? `Continuous biometric stream • Synced ${vitals.lastSynced || "Today"}`
+                        : "Vitals are not configured yet • Showing reference examples below"}
+                    </p>
                   </div>
-
-                  <div className="mt-4 flex items-baseline gap-1.5">
-                    <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-                      {vitals.height}
-                    </span>
-                    <span className="text-sm font-semibold text-muted">cm</span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
-                    <span>
-                      {feet}&apos; {inches}&quot;
-                    </span>
-                    <span className="text-teal-600 dark:text-teal-400 font-medium">
-                      Adult Standard
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempVitals({
+                        height: vitals.height || 172,
+                        weight: vitals.weight || 64.5,
+                        bloodType: vitals.bloodType || "A+",
+                        bloodRh: vitals.bloodRh || "POS",
+                      });
+                      setFormError("");
+                      setIsEditVitalsOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
+                  >
+                    <Pencil className="size-3" />
+                    {hasVitals ? "Update Vitals" : "Enter Your Vitals"}
+                  </button>
                 </div>
 
-                {/* WEIGHT CARD */}
-                <div
-                  className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                      WEIGHT
-                    </span>
-                    <div className="grid size-8 place-items-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                      <Scale className="size-4" />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-baseline gap-1.5">
-                    <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-                      {vitals.weight}
-                    </span>
-                    <span className="text-sm font-semibold text-muted">kg</span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
-                    <span>{weightLbs} lbs</span>
-                    <span className={`font-semibold ${bmiStatus.color}`}>
-                      BMI {bmi}
-                    </span>
-                  </div>
-                </div>
-
-                {/* BLOOD TYPE CARD */}
-                <div
-                  className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                      BLOOD TYPE
-                    </span>
-                    <div className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-500">
-                      <Droplet className="size-4 fill-rose-500 text-rose-500" />
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-baseline gap-2">
-                    <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-                      {vitals.bloodType}
-                    </span>
-                    <span className="text-xs font-bold uppercase tracking-wider text-rose-500">
-                      {vitals.bloodRh}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
+                {/* Banner when vitals are not set yet */}
+                {!hasVitals && (
+                  <div className="flex items-center gap-2.5 rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs text-foreground">
+                    <AlertCircle className="size-4 shrink-0 text-primary" />
                     <span>
-                      Rh {vitals.bloodRh === "POS" ? "Positive" : "Negative"}
+                      <strong>Notice:</strong> Your vitals are currently empty.
+                      The figures below are examples for reference. Click{" "}
+                      <strong>&quot;Enter Your Vitals&quot;</strong> to log your
+                      measurements.
                     </span>
-                    <span className="font-medium text-foreground">
-                      Donor Match
-                    </span>
+                  </div>
+                )}
+
+                {/* 3 Metric Cards (HEIGHT, WEIGHT, BLOOD TYPE) */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  {/* HEIGHT CARD */}
+                  <div
+                    className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold tracking-wider text-muted uppercase">
+                        HEIGHT
+                      </span>
+                      <div className="grid size-8 place-items-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                        <Ruler className="size-4" />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-baseline gap-1.5">
+                      {hasVitals ? (
+                        <>
+                          <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+                            {vitals.height}
+                          </span>
+                          <span className="text-sm font-semibold text-muted">
+                            cm
+                          </span>
+                        </>
+                      ) : (
+                        <div className="flex flex-col">
+                          <span className="text-3xl font-extrabold tracking-tight text-muted/60">
+                            —
+                          </span>
+                          <span className="mt-1 text-[11px] font-semibold text-primary">
+                            e.g. 172 cm (5&apos;8&quot;)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
+                      <span>
+                        {hasVitals ? `${feet}' ${inches}"` : "Not set yet"}
+                      </span>
+                      <span className="text-teal-600 dark:text-teal-400 font-medium">
+                        {hasVitals ? "Adult Standard" : "Click to enter"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* WEIGHT CARD */}
+                  <div
+                    className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold tracking-wider text-muted uppercase">
+                        WEIGHT
+                      </span>
+                      <div className="grid size-8 place-items-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <Scale className="size-4" />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-baseline gap-1.5">
+                      {hasVitals ? (
+                        <>
+                          <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+                            {vitals.weight}
+                          </span>
+                          <span className="text-sm font-semibold text-muted">
+                            kg
+                          </span>
+                        </>
+                      ) : (
+                        <div className="flex flex-col">
+                          <span className="text-3xl font-extrabold tracking-tight text-muted/60">
+                            —
+                          </span>
+                          <span className="mt-1 text-[11px] font-semibold text-primary">
+                            e.g. 64.5 kg (142 lbs)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
+                      <span>
+                        {hasVitals ? `${weightLbs} lbs` : "Not set yet"}
+                      </span>
+                      {hasVitals ? (
+                        <span className={`font-semibold ${bmiStatus.color}`}>
+                          BMI {bmi}
+                        </span>
+                      ) : (
+                        <span className="text-blue-600 dark:text-blue-400 font-medium">
+                          Auto-BMI
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* BLOOD TYPE CARD */}
+                  <div
+                    className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold tracking-wider text-muted uppercase">
+                        BLOOD TYPE
+                      </span>
+                      <div className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-500">
+                        <Droplet className="size-4 fill-rose-500 text-rose-500" />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-baseline gap-2">
+                      {hasVitals ? (
+                        <>
+                          <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
+                            {vitals.bloodType}
+                          </span>
+                          <span className="text-xs font-bold uppercase tracking-wider text-rose-500">
+                            {vitals.bloodRh}
+                          </span>
+                        </>
+                      ) : (
+                        <div className="flex flex-col">
+                          <span className="text-3xl font-extrabold tracking-tight text-muted/60">
+                            —
+                          </span>
+                          <span className="mt-1 text-[11px] font-semibold text-primary">
+                            e.g. A+ POS
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
+                      <span>
+                        {hasVitals
+                          ? `Rh ${vitals.bloodRh === "POS" ? "Positive" : "Negative"}`
+                          : "Not set yet"}
+                      </span>
+                      <span className="font-medium text-foreground">
+                        {hasVitals ? "Donor Match" : "Click to select"}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* 2. SECURITY & PREFERENCES SECTION (Matching Mobile Screen List) */}
+            {/* FAMILY MEMBERS SECTION */}
+            {!isDoctor && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-bold tracking-tight text-foreground sm:text-xl flex items-center gap-2">
+                      <Users className="size-5 text-primary" />
+                      Family Members
+                    </h3>
+                    <p className="text-xs text-muted">
+                      Connected family health records & reciprocal relationships
+                      in RTDB
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFamilyUsername("");
+                      setFamilyType("parent");
+                      setFamilyError("");
+                      setIsAddFamilyOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
+                  >
+                    <UserPlus className="size-3.5" />
+                    Add Member
+                  </button>
+                </div>
+
+                {/* Family Members Grid / Empty State */}
+                {profile.family && Object.keys(profile.family).length > 0 ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {Object.values(profile.family).map((member) => {
+                      const relMeta = RELATIONSHIP_LABELS[member.type] || {
+                        label: member.type || "Family",
+                        color: "bg-primary/10 text-primary border-primary/20",
+                      };
+                      return (
+                        <div
+                          key={member.id || member.username}
+                          className={`flex flex-col justify-between p-4.5 ${GLASS_CARD}`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-3">
+                              <div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary font-bold border border-primary/20">
+                                {member.name?.[0]?.toUpperCase() || (
+                                  <User className="size-5" />
+                                )}
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-bold text-foreground">
+                                  {member.name || "Family Member"}
+                                </h4>
+                                <p className="text-xs text-muted font-mono">
+                                  @{member.username}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border capitalize ${relMeta.color}`}
+                            >
+                              {relMeta.label}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-xs">
+                            <span className="text-[11px] text-muted">
+                              Linked{" "}
+                              {member.createdAt
+                                ? formatMemberDate(member.createdAt)
+                                : "Recently"}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={removingFamilyId === member.id}
+                              onClick={() =>
+                                handleRemoveFamilyMember(member.id)
+                              }
+                              className="font-semibold text-rose-500 hover:text-rose-600 transition text-[11px] disabled:opacity-50"
+                            >
+                              {removingFamilyId === member.id
+                                ? "Removing…"
+                                : "Remove"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div
+                    className={`flex flex-col items-center justify-center p-6 text-center ${GLASS_CARD} border-dashed`}
+                  >
+                    <div className="grid size-12 place-items-center rounded-full bg-primary/10 text-primary mb-2">
+                      <Users className="size-6" />
+                    </div>
+                    <p className="text-sm font-bold text-foreground">
+                      No Family Members Linked
+                    </p>
+                    <p className="text-xs text-muted mt-1 max-w-[280px]">
+                      Connect parents, children, spouse, or siblings to
+                      coordinate care and emergency access.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFamilyUsername("");
+                        setFamilyType("parent");
+                        setFamilyError("");
+                        setIsAddFamilyOpen(true);
+                      }}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white"
+                    >
+                      <UserPlus className="size-3.5" />
+                      Link First Member
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 2. SECURITY & PREFERENCES SECTION */}
             <div className="flex flex-col gap-3">
               <h3 className="text-base font-bold text-foreground">
                 Account & Security Settings
@@ -1020,7 +2181,7 @@ export default function ProfileView() {
               </div>
             </div>
 
-            {/* 3. ACTIVE INTEGRATIONS SECTION (Matching Mobile Screen Grid) */}
+            {/* 3. ACTIVE INTEGRATIONS SECTION */}
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -1224,6 +2385,7 @@ export default function ProfileView() {
                   type="number"
                   min="50"
                   max="250"
+                  placeholder="e.g. 172"
                   value={tempVitals.height}
                   onChange={(e) =>
                     setTempVitals({
@@ -1250,6 +2412,7 @@ export default function ProfileView() {
                   step="0.1"
                   min="20"
                   max="300"
+                  placeholder="e.g. 64.5"
                   value={tempVitals.weight}
                   onChange={(e) =>
                     setTempVitals({
@@ -1593,6 +2756,30 @@ export default function ProfileView() {
                 </div>
               </div>
 
+              {/* Account Role / Type */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="profile-type"
+                  className="text-xs font-semibold text-muted uppercase"
+                >
+                  Account Role
+                </label>
+                <select
+                  id="profile-type"
+                  value={tempProfile.type}
+                  onChange={(e) =>
+                    setTempProfile({
+                      ...tempProfile,
+                      type: e.target.value,
+                    })
+                  }
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary capitalize"
+                >
+                  <option value="user">Patient / User</option>
+                  <option value="doctor">Medical Doctor</option>
+                </select>
+              </div>
+
               {/* Email (Read-only as per instructions "except for email") */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
@@ -1735,6 +2922,118 @@ export default function ProfileView() {
                 />
               </div>
 
+              {/* Family Relationships Section (RTDB reciprocal links) */}
+              <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-background/50 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="size-4 text-primary" />
+                    <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                      Family Relationships
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-muted font-medium">
+                    {profile.family ? Object.keys(profile.family).length : 0}{" "}
+                    Linked
+                  </span>
+                </div>
+
+                {/* Current Family Members List */}
+                {profile.family && Object.keys(profile.family).length > 0 && (
+                  <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pr-1">
+                    {Object.values(profile.family).map((member) => {
+                      const relMeta = RELATIONSHIP_LABELS[member.type] || {
+                        label: member.type || "Family",
+                        color: "bg-primary/10 text-primary border-primary/20",
+                      };
+                      return (
+                        <div
+                          key={member.id || member.username}
+                          className="flex items-center justify-between rounded-lg border border-border bg-surface p-2.5 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-semibold text-foreground truncate max-w-[130px]">
+                              {member.name}
+                            </span>
+                            <span className="text-muted font-mono text-[11px]">
+                              @{member.username}
+                            </span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold border capitalize ${relMeta.color}`}
+                            >
+                              {relMeta.label}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={removingFamilyId === member.id}
+                            onClick={() => handleRemoveFamilyMember(member.id)}
+                            className="text-muted hover:text-rose-500 p-1 transition disabled:opacity-50"
+                            title="Remove family member"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add Family Member Form */}
+                <div className="flex flex-col gap-2 pt-2 border-t border-border/60">
+                  <span className="text-[11px] font-semibold text-muted">
+                    Link Family Member by Username
+                  </span>
+                  {familyError && (
+                    <p className="text-xs text-rose-500 font-medium">
+                      {familyError}
+                    </p>
+                  )}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div className="sm:col-span-2 relative flex items-center">
+                      <span className="absolute left-3 text-xs text-muted font-semibold">
+                        @
+                      </span>
+                      <input
+                        type="text"
+                        value={familyUsername}
+                        onChange={(e) =>
+                          setFamilyUsername(
+                            e.target.value
+                              .toLowerCase()
+                              .replace(/[^a-z0-9_]/g, ""),
+                          )
+                        }
+                        placeholder="username"
+                        className="w-full rounded-xl border border-border bg-surface pl-7 pr-3 py-2 text-xs text-foreground outline-none transition focus:border-primary"
+                      />
+                    </div>
+                    <select
+                      value={familyType}
+                      onChange={(e) => setFamilyType(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-foreground outline-none transition focus:border-primary capitalize"
+                    >
+                      <option value="parent">Parent</option>
+                      <option value="child">Child</option>
+                      <option value="sibling">Sibling</option>
+                      <option value="spouse">Spouse</option>
+                      <option value="grandparent">Grandparent</option>
+                      <option value="grandchild">Grandchild</option>
+                    </select>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={addingFamily || !familyUsername.trim()}
+                      onClick={handleAddFamilyMember}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white disabled:opacity-50"
+                    >
+                      <UserPlus className="size-3.5" />
+                      {addingFamily ? "Linking…" : "Link Member"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
                 <button
                   type="button"
@@ -1749,6 +3048,508 @@ export default function ProfileView() {
                   className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   {savingProfile ? "Saving to RTDB…" : "Save Profile"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= ADD FAMILY MEMBER MODAL ================= */}
+      {isAddFamilyOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-family-title"
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Users className="size-4" />
+                </div>
+                <h3
+                  id="add-family-title"
+                  className="text-base font-bold text-foreground"
+                >
+                  Link Family Member
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddFamilyOpen(false)}
+                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleAddFamilyMember}
+              className="mt-4 flex flex-col gap-4"
+            >
+              <p className="text-xs text-muted leading-relaxed">
+                Enter the username of your family member. A reciprocal
+                relationship will be created automatically in Realtime Database.
+              </p>
+
+              {familyError && (
+                <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-medium text-red-600 dark:text-red-400">
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span>{familyError}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="family-username-modal"
+                  className="text-xs font-semibold text-muted uppercase"
+                >
+                  Family Member Username *
+                </label>
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 text-sm text-muted font-semibold">
+                    @
+                  </span>
+                  <input
+                    id="family-username-modal"
+                    type="text"
+                    required
+                    value={familyUsername}
+                    onChange={(e) =>
+                      setFamilyUsername(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""),
+                      )
+                    }
+                    placeholder="username"
+                    className="w-full rounded-xl border border-border bg-background pl-8 pr-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="family-relation-modal"
+                  className="text-xs font-semibold text-muted uppercase"
+                >
+                  Relationship to You *
+                </label>
+                <select
+                  id="family-relation-modal"
+                  value={familyType}
+                  onChange={(e) => setFamilyType(e.target.value)}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary capitalize"
+                >
+                  <option value="parent">Parent (They see you as Child)</option>
+                  <option value="child">Child (They see you as Parent)</option>
+                  <option value="sibling">Sibling (Reciprocal)</option>
+                  <option value="spouse">Spouse (Reciprocal)</option>
+                  <option value="grandparent">
+                    Grandparent (They see you as Grandchild)
+                  </option>
+                  <option value="grandchild">
+                    Grandchild (They see you as Grandparent)
+                  </option>
+                </select>
+              </div>
+
+              <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsAddFamilyOpen(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingFamily || !familyUsername.trim()}
+                  className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {addingFamily ? "Linking…" : "Link Member"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= SHARE PROFILE MODAL ================= */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-modal-title"
+            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Share2 className="size-4" aria-hidden="true" />
+                </div>
+                <h3
+                  id="share-modal-title"
+                  className="text-base font-bold text-foreground"
+                >
+                  Share Public Profile
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsShareModalOpen(false)}
+                aria-label="Close share dialog"
+                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
+              >
+                <X className="size-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-4">
+              <p className="text-xs leading-relaxed text-muted">
+                Anyone with this link can view your profile on Vitality —
+                whether they have signed up or not. The page is SEO-optimized
+                and verified with live data.
+              </p>
+
+              {/* Link Box */}
+              <div className="flex items-center gap-2 rounded-xl border border-border bg-background p-2">
+                <div className="flex flex-1 items-center gap-2 overflow-hidden px-2">
+                  <Link2
+                    className="size-4 shrink-0 text-primary"
+                    aria-hidden="true"
+                  />
+                  <span className="truncate font-mono text-xs text-foreground">
+                    {typeof window !== "undefined"
+                      ? `${window.location.origin}${publicProfilePath}`
+                      : publicProfilePath}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyPublicLink}
+                  aria-label="Copy public profile link"
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white transition hover:opacity-90 active:scale-95"
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="size-3.5" aria-hidden="true" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-3.5" aria-hidden="true" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-col items-center gap-2.5 pt-2 sm:flex-row">
+                <Link
+                  href={publicProfilePath}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex w-full flex-1 items-center justify-center gap-1.5 rounded-xl border border-border bg-surface py-2.5 text-xs font-semibold text-foreground transition hover:bg-accent"
+                >
+                  <ExternalLink
+                    className="size-3.5 text-primary"
+                    aria-hidden="true"
+                  />
+                  Preview Public Profile
+                </Link>
+
+                {typeof navigator !== "undefined" && navigator.share && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fullUrl = `${window.location.origin}${publicProfilePath}`;
+                      navigator
+                        .share({
+                          title: isDoctor
+                            ? `Dr. ${profile.name}'s Medical Profile | Vitality`
+                            : `${profile.name}'s Health Profile | Vitality`,
+                          text: `View ${profile.name}'s verified profile on Vitality Health:`,
+                          url: fullUrl,
+                        })
+                        .catch(() => {});
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-xs font-bold text-primary transition hover:bg-primary hover:text-white sm:w-auto"
+                  >
+                    <Share2 className="size-3.5" aria-hidden="true" />
+                    Share via Device
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= EDIT CREDENTIALS MODAL (DOCTOR ONLY) ================= */}
+      {isEditCredentialsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cred-modal-title"
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="grid size-8 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Award className="size-4" aria-hidden="true" />
+                </div>
+                <h3
+                  id="cred-modal-title"
+                  className="text-base font-bold text-foreground"
+                >
+                  {hasDoctorCredentials
+                    ? "Edit Professional Credentials"
+                    : "Enter Professional Verification"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditCredentialsOpen(false)}
+                aria-label="Close credentials dialog"
+                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
+              >
+                <X className="size-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleSaveCredentials}
+              className="mt-4 flex flex-col gap-4 max-h-[80vh] overflow-y-auto pr-1"
+            >
+              {formError && (
+                <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400">
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* ── Required License Section ─────────────────────────────────── */}
+              <div className="flex flex-col gap-3 rounded-xl border border-border p-4 bg-background/40">
+                <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <FileCheck className="size-4 text-primary" />
+                  Medical License (Required)
+                </p>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-specialty"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      Medical Specialty *
+                    </label>
+                    <input
+                      id="cred-specialty"
+                      type="text"
+                      required
+                      minLength={2}
+                      value={tempCredentials.specialty}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          specialty: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. Cardiology"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-licnum"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      License Number *
+                    </label>
+                    <input
+                      id="cred-licnum"
+                      type="text"
+                      required
+                      minLength={3}
+                      value={tempCredentials.licenseNumber}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          licenseNumber: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. MD-984201"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-licissuer"
+                      className="text-xs font-semibold text-muted uppercase flex items-center gap-1"
+                    >
+                      <Building2 className="size-3.5 text-primary" />
+                      Issuing Institution *
+                    </label>
+                    <input
+                      id="cred-licissuer"
+                      type="text"
+                      required
+                      minLength={2}
+                      value={tempCredentials.licenseIssuer}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          licenseIssuer: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. State Medical Board"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-licyear"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      Issue Year *
+                    </label>
+                    <input
+                      id="cred-licyear"
+                      type="number"
+                      required
+                      min={1950}
+                      max={new Date().getFullYear()}
+                      value={tempCredentials.licenseYear}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          licenseYear: e.target.value,
+                        })
+                      }
+                      placeholder={String(new Date().getFullYear())}
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <FileDropZone
+                  label="License Document"
+                  required
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  hint="PDF, JPG, or PNG — max 10 MB"
+                  currentFileName={tempCredentials.licenseDoc}
+                  file={tempLicenseFile}
+                  onFileChange={(f) => setTempLicenseFile(f)}
+                />
+              </div>
+
+              {/* ── Optional Degree Section ──────────────────────────────────── */}
+              <div className="flex flex-col gap-3 rounded-xl border border-border p-4 bg-background/40">
+                <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <GraduationCap className="size-4 text-indigo-500" />
+                  Medical Degree / Diploma (Optional)
+                </p>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-degreetitle"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      Degree Title
+                    </label>
+                    <input
+                      id="cred-degreetitle"
+                      type="text"
+                      value={tempCredentials.degreeTitle}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          degreeTitle: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. Bachelor of Medicine & Surgery (MBBCh)"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label
+                      htmlFor="cred-degreeissuer"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      University / Institution
+                    </label>
+                    <input
+                      id="cred-degreeissuer"
+                      type="text"
+                      value={tempCredentials.degreeIssuer}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          degreeIssuer: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. Cairo University"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <label
+                      htmlFor="cred-degreeyear"
+                      className="text-xs font-semibold text-muted uppercase"
+                    >
+                      Graduation Year
+                    </label>
+                    <input
+                      id="cred-degreeyear"
+                      type="number"
+                      min={1950}
+                      max={new Date().getFullYear()}
+                      value={tempCredentials.degreeYear}
+                      onChange={(e) =>
+                        setTempCredentials({
+                          ...tempCredentials,
+                          degreeYear: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. 2018"
+                      className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <FileDropZone
+                  label="Degree Document"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  hint="PDF, JPG, or PNG — max 10 MB"
+                  currentFileName={tempCredentials.degreeDoc}
+                  file={tempDegreeFile}
+                  onFileChange={(f) => setTempDegreeFile(f)}
+                />
+              </div>
+
+              <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsEditCredentialsOpen(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingCredentials}
+                  className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {savingCredentials
+                    ? "Saving to RTDB…"
+                    : hasDoctorCredentials
+                      ? "Save Credentials"
+                      : "Submit Verification"}
                 </button>
               </div>
             </form>
