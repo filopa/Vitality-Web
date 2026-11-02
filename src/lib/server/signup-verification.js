@@ -7,7 +7,7 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { adminRTDB } from "@/lib/firebase-admin";
 
 const CODE_LENGTH = 5;
@@ -72,30 +72,23 @@ export async function sendSignupVerificationCode(email) {
     requestId,
   });
 
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM;
-  if (!host || !Number.isInteger(port) || !user || !pass || !from) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.RESEND_FROM;
+  if (!apiKey || !from) {
     await ref.remove();
-    throw new Error("SMTP configuration is incomplete.");
+    throw new Error("Resend configuration is incomplete (RESEND_API_KEY or RESEND_FROM missing).");
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-    });
-    await transporter.sendMail({
+    const resend = new Resend(apiKey);
+    const { error } = await resend.emails.send({
       from,
       to: normalizedEmail,
       subject: "Your Vitality verification code",
       text: `Your Vitality verification code is ${code}. It expires in 10 minutes.`,
       html: `<p>Your Vitality verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request it, you can ignore this email.</p>`,
     });
+    if (error) throw new Error(`Resend error: ${error.message}`);
     return { sent: true };
   } catch (error) {
     await ref.remove();
