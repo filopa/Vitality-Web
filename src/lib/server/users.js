@@ -94,7 +94,110 @@ export async function getUser(uid) {
     if (!user.family) user.family = {};
   }
 
+  // Load followers count from followers/${uid}
+  try {
+    const followersSnap = await adminRTDB.ref(`followers/${uid}`).get();
+    if (followersSnap.exists()) {
+      const val = followersSnap.val();
+      user.followersCount = Object.keys(val).length;
+      user.followers = val; // map of { [followerUid]: timestamp }
+    } else {
+      user.followersCount = 0;
+      user.followers = {};
+    }
+  } catch (err) {
+    console.error("Failed to fetch followers:", err);
+    user.followersCount = 0;
+    user.followers = {};
+  }
+
+  // Load following count from following/${uid}
+  try {
+    const followingSnap = await adminRTDB.ref(`following/${uid}`).get();
+    if (followingSnap.exists()) {
+      const val = followingSnap.val();
+      user.followingCount = Object.keys(val).length;
+      user.following = val; // map of { [followedUid]: timestamp }
+    } else {
+      user.followingCount = 0;
+      user.following = {};
+    }
+  } catch (err) {
+    console.error("Failed to fetch following:", err);
+    user.followingCount = 0;
+    user.following = {};
+  }
+
   return user;
+}
+
+/**
+ * Follow a user.
+ * Writes timestamp to:
+ *   following/{uidA}/{uidB}
+ *   followers/{uidB}/{uidA}
+ */
+export async function followUser(uidA, uidB) {
+  if (!uidA || !uidB) throw new Error("Missing UIDs.");
+  if (uidA === uidB) throw new Error("You cannot follow yourself.");
+
+  const targetUser = await getUser(uidB);
+  if (!targetUser) throw new Error("Target user not found.");
+
+  const now = Date.now();
+  await Promise.all([
+    adminRTDB.ref(`following/${uidA}/${uidB}`).set(now),
+    adminRTDB.ref(`followers/${uidB}/${uidA}`).set(now),
+  ]);
+}
+
+/**
+ * Unfollow a user.
+ * Removes from:
+ *   following/{uidA}/{uidB}
+ *   followers/{uidB}/{uidA}
+ */
+export async function unfollowUser(uidA, uidB) {
+  if (!uidA || !uidB) throw new Error("Missing UIDs.");
+
+  await Promise.all([
+    adminRTDB.ref(`following/${uidA}/${uidB}`).remove(),
+    adminRTDB.ref(`followers/${uidB}/${uidA}`).remove(),
+  ]);
+}
+
+/**
+ * Returns the list of users that uidA is following,
+ * enriched with their name, username, type, and photo.
+ */
+export async function getFollowing(uid) {
+  const snap = await adminRTDB.ref(`following/${uid}`).get();
+  if (!snap.exists()) return [];
+
+  const followingMap = snap.val(); // { [targetUid]: timestamp }
+  const uids = Object.keys(followingMap);
+
+  const users = await Promise.all(
+    uids.map(async (targetUid) => {
+      try {
+        const userSnap = await adminRTDB.ref(`users/${targetUid}`).get();
+        if (!userSnap.exists()) return null;
+        const u = userSnap.val();
+        return {
+          uid: targetUid,
+          name: u.name || u.username || "Vitality User",
+          username: u.username || "",
+          type: u.type || "user",
+          photo: u.urlProfile || u.photoURL || u.avatarURL || "",
+          followedAt: followingMap[targetUid],
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return users.filter(Boolean);
 }
 
 /** Looks up user by either their Firebase UID or their unique username. */

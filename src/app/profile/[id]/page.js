@@ -21,6 +21,7 @@ import { connection } from "next/server";
 import JsonLd from "@/app/_components/seo/JsonLd";
 import ThemeToggle from "@/app/theme-toggle";
 import { getUserByIdOrUsername } from "@/lib/server/users";
+import FollowActions from "./_components/FollowActions";
 
 export const instant = false;
 
@@ -213,20 +214,11 @@ export default async function PublicProfilePage({ params }) {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center gap-2.5 pt-2 sm:pt-0">
-                <Link
-                  href={isDoctor ? "/signup?as=patient" : "/signup"}
-                  className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-md transition hover:opacity-90"
-                >
-                  {isDoctor ? "Book Consultation" : "Connect on Vitality"}
-                </Link>
-                <Link
-                  href="/login"
-                  className="rounded-xl border border-border bg-surface px-4 py-2.5 text-xs font-semibold text-foreground transition hover:bg-accent"
-                >
-                  Send Message
-                </Link>
-              </div>
+              <FollowActions
+                targetUid={user.uid}
+                targetName={name}
+                isDoctor={isDoctor}
+              />
             </div>
 
             {/* User Meta Information */}
@@ -287,6 +279,22 @@ export default async function PublicProfilePage({ params }) {
                   {user.bio}
                 </p>
               )}
+
+              {/* Followers / Following stats */}
+              <div className="mt-4 flex items-center gap-5 text-sm">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-foreground">
+                    {user.followersCount ?? 0}
+                  </span>
+                  <span className="text-muted">Followers</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-foreground">
+                    {user.followingCount ?? 0}
+                  </span>
+                  <span className="text-muted">Following</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -538,6 +546,40 @@ export default async function PublicProfilePage({ params }) {
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Followers Section */}
+        {user.followers && Object.keys(user.followers).length > 0 && (
+          <div className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                <Users className="size-5 text-primary" />
+                Followers
+              </h2>
+              <p className="text-xs text-muted">
+                {user.followersCount} people follow {name} on Vitality
+              </p>
+            </div>
+            {/* Show up to 9 follower avatars as a compact grid */}
+            <div className="flex flex-wrap gap-3">
+              {Object.keys(user.followers)
+                .slice(0, 9)
+                .map((followerUid) => (
+                  <div
+                    key={followerUid}
+                    className="grid size-10 place-items-center rounded-full bg-primary/15 text-xs font-bold text-primary border border-primary/20"
+                    title={followerUid}
+                  >
+                    <User className="size-4" />
+                  </div>
+                ))}
+              {user.followersCount > 9 && (
+                <div className="grid size-10 place-items-center rounded-full border border-border bg-surface text-xs font-bold text-muted">
+                  +{user.followersCount - 9}
+                </div>
+              )}
             </div>
           </div>
         )}
