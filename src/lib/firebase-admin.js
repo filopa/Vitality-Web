@@ -22,10 +22,10 @@ export const normalizeFirebasePrivateKey = (value) => {
     .replace(/\\r/g, "\n");
 };
 
-const projectId = process.env.FIREBASE_PROJECT_ID;
-const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+const clientEmail = process.env.NEXT_PRIVATE_FIREBASE_CLIENT_EMAIL;
 const privateKey = normalizeFirebasePrivateKey(
-  process.env.FIREBASE_PRIVATE_KEY,
+  process.env.NEXT_PRIVATE_FIREBASE_PRIVATE_KEY,
 );
 
 if (!projectId || !clientEmail || !privateKey) {
@@ -41,7 +41,7 @@ const app =
           clientEmail,
           privateKey,
         }),
-        databaseURL: process.env.FIREBASE_DATABASE_URL,
+        databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
       });
 
 export const adminAuth = getAuth(app);

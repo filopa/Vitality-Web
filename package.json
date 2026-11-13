@@ -7,9 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "biome check",
-    "format": "biome format --write"
+    "format": "biome format --write",
+    "backfill:public-profiles": "node src/scripts/backfill-public-profiles.mjs",
+    "test:database-rules": "firebase emulators:exec --project demo-vitality --only database \"node src/scripts/test-database-rules.mjs\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1164.0",
+    "@aws-sdk/s3-request-presigner": "^3.1164.0",
     "dotenv": "^18.0.9",
     "firebase": "^13.1.0",
     "firebase-admin": "^14.5.0",
@@ -20,7 +24,8 @@
     "nodemailer": "^10.3.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "resend": "^6.37.0"
+    "resend": "^6.37.0",
+    "tus-js-client": "^4.3.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.2",

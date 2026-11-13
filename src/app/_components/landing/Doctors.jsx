@@ -26,7 +26,7 @@ export default function Doctors() {
             medical community.
           </p>
           <div className="mt-6">
-            <Button href="/signup/doctor">Join as a Doctor</Button>
+            <Button href="/signup">Join as a Doctor</Button>
           </div>
         </div>
 

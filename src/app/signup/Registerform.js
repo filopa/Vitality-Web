@@ -1,9 +1,8 @@
 "use client";
 
-import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import {
   AtSign,
-  CheckCircle2,
   Lock,
   Mail,
   Mars,
@@ -11,13 +10,12 @@ import {
   User,
   UserRound,
   Venus,
-  X,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/AppProvider";
-import { confirmBackendSession } from "@/lib/client/api";
-import { auth } from "@/lib/firebase";
+import { authedFetch } from "@/lib/client/api";
+import { auth, ensureFirebaseAuthPersistence } from "@/lib/firebase";
 import {
   formatLocalPhone,
   getPhoneE164,
@@ -75,11 +73,20 @@ function OrDivider() {
   );
 }
 
+// ─── Redirect safety ──────────────────────────────────────────────────────────
+
+const DEFAULT_REDIRECT = "/home";
+
+function getSafeRedirect(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) return DEFAULT_REDIRECT;
+  if (value.startsWith("//") || /[\u0000-\u001F\u007F\\]/.test(value)) return DEFAULT_REDIRECT;
+  return value;
+}
 // ─── Main form ────────────────────────────────────────────────────────────────
 
 export function RegisterForm() {
   const router = useRouter();
-  const { refreshSession } = useApp();
+  const { refreshUserData } = useApp();
   const { setPendingSignup } = useSignupFlow();
   const [gender, setGender] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -90,7 +97,6 @@ export function RegisterForm() {
   const [birthday, setBirthday] = useState("");
   const [country, setCountry] = useState("");
   const [phone, setPhone] = useState("");
-  const [googleUser, setGoogleUser] = useState(null);
   const [nameValue, setNameValue] = useState("");
   const [emailValue, setEmailValue] = useState("");
   const [username, setUsername] = useState("");
@@ -98,6 +104,8 @@ export function RegisterForm() {
   const [suggestions, setSuggestions] = useState([]);
   const [checkingUsername, setCheckingUsername] = useState(false);
   const usernameRequestRef = useRef(0);
+  const searchParams = useSearchParams();
+  const redirectPath = getSafeRedirect(searchParams.get("redirect"));
 
   function handleCountryChange(nextCountry) {
     const formattedPhone = formatLocalPhone(phone, nextCountry);
@@ -190,52 +198,41 @@ export function RegisterForm() {
   async function handleGoogle() {
     setGoogleLoading(true);
     setServerError("");
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const { user } = result;
-      const idToken = await user.getIdToken();
+    let destination = null;
 
-      setGoogleUser({
-        uid: user.uid,
-        name: user.displayName || "",
-        email: user.email || "",
-        photoURL: user.photoURL || "",
-        avatarURL: user.photoURL || "",
-        idToken,
+    try {
+      await ensureFirebaseAuthPersistence();
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      const res = await authedFetch("/api/auth/google-signin", {
+        method: "POST",
       });
 
-      setNameValue(user.displayName || "");
-      setEmailValue(user.email || "");
-      // Clear previous field errors
-      setFieldErrors({});
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setServerError(json.message ?? "Google sign-in failed. Please try again.");
+        return;
+      }
+
+      await refreshUserData();
+      destination = json.data?.isNew ? "/home" : redirectPath;
     } catch (err) {
-      console.log("Google error:", err.code, err.message);
-      if (err.code !== "auth/popup-closed-by-user") {
-        setServerError("Google connection failed. Please try again.");
+      if (err?.code !== "auth/popup-closed-by-user") {
+        console.error("Google signup sign-in failed:", err);
+        setServerError("Google sign-in failed. Please try again.");
       }
     } finally {
-      try {
-        await signOut(auth);
-      } catch (signOutError) {
-        console.error("Firebase sign-out failed:", signOutError);
-        setGoogleUser(null);
-        setServerError("Google sign-out failed. Please try again.");
-      }
       setGoogleLoading(false);
+
+      if (destination) {
+        router.push(destination);
+        router.refresh();
+      }
     }
   }
-
-  function handleDisconnectGoogle() {
-    setGoogleUser(null);
-    setNameValue("");
-    setEmailValue("");
-  }
-
   async function handleSubmit(e) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
-    let destination = null;
 
     const errs = {};
     const name = (data.get("name") ?? nameValue).trim();
@@ -268,18 +265,16 @@ export function RegisterForm() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       errs.email = "Enter a valid email address.";
 
-    if (!googleUser) {
-      if (
-        password.length < 8 ||
-        !/[0-9]/.test(password) ||
-        !/[^A-Za-z0-9]/.test(password)
-      )
-        errs.password =
-          "Password must be 8+ characters with a number and a special character.";
+    if (
+      password.length < 8 ||
+      !/[0-9]/.test(password) ||
+      !/[^A-Za-z0-9]/.test(password)
+    )
+      errs.password =
+        "Password must be 8+ characters with a number and a special character.";
 
-      if (password !== confirmPassword)
-        errs.confirmPassword = "Passwords do not match.";
-    }
+    if (password !== confirmPassword)
+      errs.confirmPassword = "Passwords do not match.";
 
     if (!gender) errs.gender = "Please select your gender.";
     if (!terms) errs.terms = "You must accept the terms and conditions.";
@@ -302,153 +297,44 @@ export function RegisterForm() {
         gender,
         requestedType: type,
         birthday: data.get("birthday") ?? "",
+        password,
       };
 
-      if (googleUser) {
-        payload.googleUid = googleUser.uid;
-        payload.photoURL = googleUser.photoURL;
-        payload.idToken = googleUser.idToken;
-      } else {
-        payload.password = password;
-
-        const verificationResponse = await fetch(
-          "/api/auth/signup/request-code",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: payload.email }),
-          },
-        );
-        const verificationResult = await verificationResponse.json();
-        if (!verificationResponse.ok || !verificationResult.success) {
-          if (verificationResult.code === "EMAIL_EXISTS") {
-            setFieldErrors((previous) => ({
-              ...previous,
-              email: "This email is already registered.",
-            }));
-          } else {
-            setServerError(
-              verificationResult.message ??
-                "We couldn't send the verification code. Please try again.",
-            );
-          }
-          return;
-        }
-
-        setPendingSignup(payload);
-        router.push("/signup/check-code");
-        return;
-      }
-
-      const res = await fetch("/api/auth/signup", {
+      const verificationResponse = await fetch("/api/auth/signup/request-code", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ email: payload.email }),
       });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        if (json.code === "VALIDATION_ERROR" && json.errors) {
-          setFieldErrors((p) => ({ ...p, ...json.errors }));
-        } else if (json.code === "EMAIL_EXISTS") {
+      const verificationResult = await verificationResponse.json();
+      if (!verificationResponse.ok || !verificationResult.success) {
+        if (verificationResult.code === "EMAIL_EXISTS") {
           setFieldErrors((p) => ({
             ...p,
             email: "This email is already registered.",
           }));
-        } else if (json.code === "WEAK_PASSWORD") {
-          setFieldErrors((p) => ({
-            ...p,
-            password: "Password is too weak. Try a stronger one.",
-          }));
-        } else if (json.code === "TOO_MANY_REQUESTS") {
-          setServerError(
-            "Too many attempts. Please wait a moment and try again.",
-          );
         } else {
           setServerError(
-            json.message ?? "Something went wrong. Please try again.",
+            verificationResult.message ??
+              "We couldn't send the verification code. Please try again.",
           );
         }
         return;
       }
 
-      await confirmBackendSession();
-      if (!(await refreshSession())) {
-        throw new Error("The server session could not be loaded.");
-      }
-
-      destination = "/home";
+      setPendingSignup(payload);
+      router.push("/signup/check-code");
+      return;
     } catch {
       setServerError(
         "Network error. Please check your connection and try again.",
       );
     } finally {
-      if (googleUser) {
-        await signOut(auth).catch(async (signOutError) => {
-          console.error("Firebase sign-out failed:", signOutError);
-          destination = null;
-          setServerError("Google sign-out failed. Please try again.");
-          await fetch("/api/auth/session", {
-            method: "DELETE",
-            credentials: "same-origin",
-          }).catch((logoutError) => {
-            console.error("Backend sign-out after Firebase failure failed:", logoutError);
-          });
-        });
-      }
       setSubmitting(false);
     }
-
-    if (destination) {
-      router.push(destination);
-      router.refresh();
-    }
   }
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col gap-6">
-      {/* If connected with Google, show connected indicator banner at top */}
-      {googleUser && (
-        <div className="flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/5 p-4">
-          <div className="flex items-center gap-3">
-            {googleUser.photoURL ? (
-              <img
-                src={googleUser.photoURL}
-                alt=""
-                className="h-10 w-10 rounded-full border border-primary/20"
-              />
-            ) : (
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 font-bold text-primary">
-                {googleUser.name?.[0] || "G"}
-              </div>
-            )}
-            <div>
-              <div className="flex items-center gap-1.5">
-                <p className="text-sm font-semibold text-foreground">
-                  {googleUser.name}
-                </p>
-                <CheckCircle2 className="h-4 w-4 text-primary" />
-              </div>
-              <p className="text-xs text-muted">
-                {googleUser.email} • Connected with Google
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleDisconnectGoogle}
-            className="flex items-center gap-1 text-xs font-medium text-muted hover:text-red-500"
-            title="Use a different account or sign up with email"
-          >
-            <X className="h-4 w-4" />
-            <span>Change</span>
-          </button>
-        </div>
-      )}
-
       {/* Main normal signup form */}
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-6">
         {serverError && (
@@ -473,11 +359,10 @@ export function RegisterForm() {
                 type="button"
                 onClick={() => setType("user")}
                 aria-pressed={type === "user"}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
-                  type === "user"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted hover:border-primary"
-                }`}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${type === "user"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted hover:border-primary"
+                  }`}
               >
                 <UserRound className="h-5 w-5" />
                 <span>User</span>
@@ -487,11 +372,10 @@ export function RegisterForm() {
                 type="button"
                 onClick={() => setType("doctor")}
                 aria-pressed={type === "doctor"}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
-                  type === "doctor"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted hover:border-primary"
-                }`}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${type === "doctor"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted hover:border-primary"
+                  }`}
               >
                 <Stethoscope className="h-5 w-5" />
                 <span>Doctor</span>
@@ -584,7 +468,6 @@ export function RegisterForm() {
             type="email"
             value={emailValue}
             onChange={(e) => setEmailValue(e.target.value)}
-            readOnly={Boolean(googleUser)}
             icon={<Mail className="h-5 w-5" />}
             placeholder="Enter your email"
             autoComplete="email"
@@ -613,11 +496,10 @@ export function RegisterForm() {
                 type="button"
                 onClick={() => setGender("male")}
                 aria-pressed={gender === "male"}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
-                  gender === "male"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted hover:border-primary"
-                }`}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${gender === "male"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted hover:border-primary"
+                  }`}
               >
                 <Mars className="h-5 w-5" />
                 <span>Male</span>
@@ -627,11 +509,10 @@ export function RegisterForm() {
                 type="button"
                 onClick={() => setGender("female")}
                 aria-pressed={gender === "female"}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${
-                  gender === "female"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted hover:border-primary"
-                }`}
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 transition ${gender === "female"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted hover:border-primary"
+                  }`}
               >
                 <Venus className="h-5 w-5" />
                 <span>Female</span>
@@ -668,35 +549,30 @@ export function RegisterForm() {
               className="w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm text-surface-foreground outline-none transition placeholder:text-muted/60 focus:border-primary focus:ring-4 focus:ring-primary/20"
             />
           </div>
-          {/* Passwords only shown if not using Google */}
-          {!googleUser && (
-            <>
-              <InputField
-                label="Password"
-                name="password"
-                type="password"
-                revealable
-                icon={<Lock className="h-5 w-5" />}
-                placeholder="Create a strong password"
-                autoComplete="new-password"
-                minLength={8}
-                required
-                error={fieldErrors.password}
-              />
+          <InputField
+            label="Password"
+            name="password"
+            type="password"
+            revealable
+            icon={<Lock className="h-5 w-5" />}
+            placeholder="Create a strong password"
+            autoComplete="new-password"
+            minLength={8}
+            required
+            error={fieldErrors.password}
+          />
 
-              <InputField
-                label="Confirm password"
-                name="confirmPassword"
-                type="password"
-                revealable
-                icon={<Lock className="h-5 w-5" />}
-                placeholder="Re-enter your password"
-                autoComplete="new-password"
-                required
-                error={fieldErrors.confirmPassword}
-              />
-            </>
-          )}
+          <InputField
+            label="Confirm password"
+            name="confirmPassword"
+            type="password"
+            revealable
+            icon={<Lock className="h-5 w-5" />}
+            placeholder="Re-enter your password"
+            autoComplete="new-password"
+            required
+            error={fieldErrors.confirmPassword}
+          />
 
           {/* Terms */}
           <div className="flex flex-col gap-1">
@@ -745,12 +621,10 @@ export function RegisterForm() {
       </form>
 
       {/* Google button BELOW the normal signup */}
-      {!googleUser && (
-        <div className="flex flex-col gap-6">
-          <OrDivider />
-          <GoogleButton loading={googleLoading} onClick={handleGoogle} />
-        </div>
-      )}
+      <div className="flex flex-col gap-6">
+        <OrDivider />
+        <GoogleButton loading={googleLoading} onClick={handleGoogle} />
+      </div>
     </div>
   );
 }

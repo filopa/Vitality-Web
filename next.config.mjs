@@ -30,7 +30,12 @@ const nextConfig = {
       {
         protocol: "https",
         hostname: "f003.backblazeb2.com",
-        pathname: "/file/Video-Dolphin/**",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+        pathname: "/**",
       },
     ],
   },

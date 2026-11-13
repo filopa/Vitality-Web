@@ -130,6 +130,12 @@ export async function PATCH(request) {
   ) {
     errors.gender = "Gender must be male or female.";
   }
+  if (
+    body.showFollowers !== undefined &&
+    typeof body.showFollowers !== "boolean"
+  ) {
+    errors.showFollowers = "Follower visibility must be a boolean value.";
+  }
 
   if (Object.keys(errors).length > 0) {
     return fail(400, "VALIDATION_ERROR", "Validation failed.", { errors });

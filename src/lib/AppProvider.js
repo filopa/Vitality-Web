@@ -7,78 +7,174 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { clearLegacyClientAuth } from "./client/session";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { get, onValue, ref } from "firebase/database";
+import {
+  auth,
 
-const AppContext = createContext();
+  ensureFirebaseAuthPersistence,
+
+  rtdb,
+} from "./firebase";
+
+const AppContext = createContext(null);
 
 export const AppProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState(null);
-  const THEME_STORAGE_KEY = "theme";
+  const [profileError, setProfileError] = useState(null);
+  const [followers, setFollowers] = useState({});
+  const [following, setFollowing] = useState({});
 
-  const refreshSession = useCallback(async () => {
-    setLoading(true);
+  const refreshUserData = useCallback(async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setUserData(null);
+      setFollowers({});
+      setFollowing({});
+      return false;
+    }
+
     try {
-      const response = await fetch("/api/auth/session", {
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      const result = await response.json();
-
-      if (!response.ok || !result.success || !result.data?.user?.uid) {
-        setUser(null);
+      await currentUser.getIdToken();
+      const snapshot = await get(ref(rtdb, `users/${currentUser.uid}`));
+      if (auth.currentUser?.uid !== currentUser.uid) return false;
+      setProfileError(null);
+      if (!snapshot.exists()) {
         setUserData(null);
         return false;
       }
 
-      setUser({ uid: result.data.user.uid });
-      setUserData(result.data.user);
+      setUserData({ ...snapshot.val(), uid: currentUser.uid });
       return true;
     } catch (error) {
-      console.error("Backend session check failed:", error);
-      setUser(null);
-      setUserData(null);
+      console.error("Firebase user profile refresh failed:", error);
+      setProfileError(error.message || "Firebase user profile refresh failed.");
       return false;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const savedTheme = window.localStorage.getItem("theme");
     const initialTheme =
       savedTheme === "light" || savedTheme === "dark" ? savedTheme : "light";
-
     document.documentElement.dataset.theme = initialTheme;
   }, []);
 
   useEffect(() => {
-    clearLegacyClientAuth();
-    refreshSession();
-  }, [refreshSession]);
+    let active = true;
+    let unsubscribeAuth = () => {};
+    let unsubscribeUser = () => {};
+    let unsubscribeFollowers = () => {};
+    let unsubscribeFollowing = () => {};
+
+    ensureFirebaseAuthPersistence()
+      .then(() => {
+        if (!active) return;
+
+        unsubscribeAuth = onAuthStateChanged(
+          auth,
+          (firebaseUser) => {
+            unsubscribeUser();
+            unsubscribeFollowers();
+            unsubscribeFollowing();
+            unsubscribeUser = () => {};
+            unsubscribeFollowers = () => {};
+            unsubscribeFollowing = () => {};
+
+            setUser(firebaseUser);
+            setUserData(null);
+            setProfileError(null);
+            setFollowers({});
+            setFollowing({});
+            setLoading(Boolean(firebaseUser));
+
+            if (!firebaseUser) {
+              setLoading(false);
+              return;
+            }
+
+            unsubscribeUser = onValue(
+              ref(rtdb, `users/${firebaseUser.uid}`),
+              (snapshot) => {
+                if (!active || auth.currentUser?.uid !== firebaseUser.uid) return;
+                setProfileError(null);
+                setUserData(
+                  snapshot.exists()
+                    ? { ...snapshot.val(), uid: firebaseUser.uid }
+                    : null,
+                );
+                setLoading(false);
+              },
+              (error) => {
+                console.error("Firebase user profile subscription failed:", error);
+                if (active && auth.currentUser?.uid === firebaseUser.uid) {
+                  setProfileError(
+                    error.message || "Firebase user profile subscription failed.",
+                  );
+                  setLoading(false);
+                }
+              },
+            );
+
+
+  
+          },
+          (error) => {
+            console.error("Firebase Auth state subscription failed:", error);
+            if (active) setLoading(false);
+          },
+        );
+      })
+      .catch((error) => {
+        console.error("Firebase Auth persistence initialization failed:", error);
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+      unsubscribeAuth();
+      unsubscribeUser();
+      unsubscribeFollowers();
+      unsubscribeFollowing();
+    };
+  }, []);
 
   useEffect(() => {
-    const handleExpiredSession = () => {
-      setUser(null);
-      setUserData(null);
-      setLoading(false);
+    const handleRejectedToken = () => {
+      if (auth.currentUser) {
+        signOut(auth).catch((error) => {
+          console.error("Could not clear rejected Firebase Auth state:", error);
+        });
+      }
     };
 
-    window.addEventListener("vitality:session-expired", handleExpiredSession);
+    window.addEventListener("vitality:auth-token-rejected", handleRejectedToken);
     return () =>
       window.removeEventListener(
-        "vitality:session-expired",
-        handleExpiredSession,
+        "vitality:auth-token-rejected",
+        handleRejectedToken,
       );
   }, []);
 
+
+
   return (
-    <AppContext.Provider value={{ user, loading, userData, refreshSession }}>
+    <AppContext.Provider
+      value={{
+        user,
+        loading,
+        userData,
+        profileError,
+        followers,
+        following,
+        refreshUserData,
+      }}
+    >
       {children}
     </AppContext.Provider>
   );
 };
 
-// Custom Hook عشان تستخدمه بسهولة في أي صفحة
 export const useApp = () => useContext(AppContext);

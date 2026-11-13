@@ -20,6 +20,14 @@ You can start editing the page by modifying `app/page.js`. The page auto-updates
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Authentication and Realtime Database
+
+Firebase Authentication in the browser owns login, persistence, and logout. Protected API requests use a Firebase ID token in the `Authorization` header; the backend verifies it with Firebase Admin and reads the user's role and verification status from Realtime Database. The application does not use a backend session cookie.
+
+The client can read a user's private profile and their own follower/following relationships under the rules in `database.rules.json`. Public profile pages use the allowlisted `publicProfiles` projection; health, contact, and other private fields are not included.
+
+Before deploying, run `npm run test:database-rules` against the Realtime Database Emulator. `npm run backfill:public-profiles` reports the migration without writing; review its output before explicitly applying it with `npm run backfill:public-profiles -- --apply`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

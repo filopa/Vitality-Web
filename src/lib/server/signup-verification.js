@@ -3,6 +3,7 @@ import "server-only";
 import {
   createHash,
   createHmac,
+  randomBytes,
   randomInt,
   randomUUID,
   timingSafeEqual,
@@ -15,9 +16,10 @@ const CODE_TTL_MS = 10 * 60 * 1000;
 const RESEND_INTERVAL_MS = 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const VERIFICATION_PATH = "signupVerifications";
+const TICKET_PATH = "signupVerificationTickets";
 
 function getSecret() {
-  const secret = process.env.FIREBASE_PRIVATE_KEY;
+  const secret = process.env.NEXT_PRIVATE_FIREBASE_PRIVATE_KEY;
   if (!secret) throw new Error("Signup verification secret is not configured.");
   return secret;
 }
@@ -104,41 +106,86 @@ export async function verifySignupVerificationCode(email, code) {
   const normalizedEmail = email.toLowerCase().trim();
   const ref = getRef(normalizedEmail);
   const now = Date.now();
-  const expectedHash = Buffer.from(
-    getCodeHash(normalizedEmail, String(code)),
-    "hex",
-  );
+  const expectedHash = getCodeHash(normalizedEmail, String(code));
+  let failureReason = "not_found";
+  let verified = false;
 
-  // Read the current record from server first
-  const snap = await ref.get();
-  const current = snap.val();
+  const result = await ref.transaction((current) => {
+    failureReason = "not_found";
+    verified = false;
+    if (!current || current.email !== normalizedEmail) return;
+    if (current.expiresAt <= now) {
+      failureReason = "expired";
+      return;
+    }
+    if (current.attempts >= MAX_ATTEMPTS) {
+      failureReason = "too_many_attempts";
+      return;
+    }
 
-  if (!current || current.email !== normalizedEmail) {
-    console.warn("Signup verification failed: no active record found for email.");
-    return { valid: false, reason: "not_found" };
-  }
-  if (current.expiresAt <= now) {
-    return { valid: false, reason: "expired" };
-  }
-  if (current.attempts >= MAX_ATTEMPTS) {
-    return { valid: false, reason: "too_many_attempts" };
-  }
+    const actualHash = Buffer.from(current.codeHash, "hex");
+    const expected = Buffer.from(expectedHash, "hex");
+    if (
+      actualHash.length !== expected.length ||
+      !timingSafeEqual(actualHash, expected)
+    ) {
+      failureReason = "incorrect";
+      return { ...current, attempts: current.attempts + 1 };
+    }
 
-  const actualHash = Buffer.from(current.codeHash, "hex");
-  if (
-    actualHash.length !== expectedHash.length ||
-    !timingSafeEqual(actualHash, expectedHash)
-  ) {
-    // Increment attempts counter
-    await ref.update({ attempts: current.attempts + 1 });
-    return { valid: false, reason: "incorrect" };
-  }
+    verified = true;
+    return { ...current, verifiedAt: now };
+  });
 
-  // Mark as verified
-  await ref.update({ verifiedAt: now });
+  if (!verified || !result.committed) {
+    return { valid: false, reason: failureReason };
+  }
   return { valid: true };
 }
 
 export async function clearSignupVerificationCode(email) {
   await getRef(email.toLowerCase().trim()).remove();
+}
+
+export async function createSignupVerificationTicket(email) {
+  const normalizedEmail = email.toLowerCase().trim();
+  const ticket = randomBytes(32).toString("base64url");
+  const ticketHash = createHash("sha256").update(ticket).digest("hex");
+
+  await adminRTDB.ref(`${TICKET_PATH}/${ticketHash}`).set({
+    email: normalizedEmail,
+    expiresAt: Date.now() + CODE_TTL_MS,
+  });
+
+  return ticket;
+}
+
+export async function claimSignupVerificationTicket(ticket, email, uid) {
+  const normalizedEmail = email.toLowerCase().trim();
+  const ticketHash = createHash("sha256").update(ticket).digest("hex");
+  const ticketRef = adminRTDB.ref(`${TICKET_PATH}/${ticketHash}`);
+  const now = Date.now();
+  let validForUid = false;
+
+  const result = await ticketRef.transaction((current) => {
+    if (
+      !current ||
+      current.email !== normalizedEmail ||
+      current.expiresAt <= now ||
+      (current.claimedUid && current.claimedUid !== uid)
+    ) {
+      return;
+    }
+
+    validForUid = true;
+    if (current.claimedUid === uid) return current;
+    return { ...current, claimedUid: uid, claimedAt: now };
+  });
+
+  return validForUid && result.snapshot.exists();
+}
+
+export async function completeSignupVerificationTicket(ticket) {
+  const ticketHash = createHash("sha256").update(ticket).digest("hex");
+  await adminRTDB.ref(`${TICKET_PATH}/${ticketHash}`).remove();
 }

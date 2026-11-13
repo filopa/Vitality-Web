@@ -1,4 +1,5 @@
 import { adminAuth, adminRTDB } from "@/lib/firebase-admin";
+import { syncPublicProfile } from "@/lib/server/public-profiles";
 
 const userRef = (uid) => adminRTDB.ref(`users/${uid}`);
 
@@ -22,7 +23,7 @@ export async function getUser(uid) {
     }
   }
 
-  if (user.type === "doctor" || user.requestedType === "doctor") {
+  if (user.type === "doctor") {
     try {
       const certSnap = await adminRTDB.ref(`doctorCertificates/${uid}`).get();
       if (certSnap.exists()) {
@@ -145,10 +146,11 @@ export async function followUser(uidA, uidB) {
   if (!targetUser) throw new Error("Target user not found.");
 
   const now = Date.now();
-  await Promise.all([
-    adminRTDB.ref(`following/${uidA}/${uidB}`).set(now),
-    adminRTDB.ref(`followers/${uidB}/${uidA}`).set(now),
-  ]);
+  await adminRTDB.ref().update({
+    [`following/${uidA}/${uidB}`]: now,
+    [`followers/${uidB}/${uidA}`]: now,
+  });
+  await Promise.all([syncPublicProfile(uidA), syncPublicProfile(uidB)]);
 }
 
 /**
@@ -160,10 +162,11 @@ export async function followUser(uidA, uidB) {
 export async function unfollowUser(uidA, uidB) {
   if (!uidA || !uidB) throw new Error("Missing UIDs.");
 
-  await Promise.all([
-    adminRTDB.ref(`following/${uidA}/${uidB}`).remove(),
-    adminRTDB.ref(`followers/${uidB}/${uidA}`).remove(),
-  ]);
+  await adminRTDB.ref().update({
+    [`following/${uidA}/${uidB}`]: null,
+    [`followers/${uidB}/${uidA}`]: null,
+  });
+  await Promise.all([syncPublicProfile(uidA), syncPublicProfile(uidB)]);
 }
 
 /**
@@ -255,18 +258,22 @@ export async function saveProfile(decoded, profile) {
     email: existing?.email ?? decoded.email ?? "",
     photoURL: existing?.photoURL ?? decoded.picture ?? "",
     avatarURL: existing?.photoURL ?? decoded.picture ?? "",
+    showFollowers: existing?.showFollowers === true,
     requestedType:
       profile.requestedType ??
       existing?.requestedType ??
       decoded.requestedType ??
       "user",
+    type: existing?.type ?? "user",
     termsAcceptedAt: now,
     updatedAt: now,
     ...(existing ? {} : { createdAt: now }),
   });
 
   const updatedSnap = await userReference.get();
-  return updatedSnap.val();
+  const updatedUser = updatedSnap.val();
+  await syncPublicProfile(decoded.uid);
+  return updatedUser;
 }
 
 /** Updates user profile fields, vitals, emergency contact, or photos while preserving email. */
@@ -279,21 +286,24 @@ export async function updateUserProfile(uid, updates) {
 
   const existingUser = existingSnap.val();
 
-  // Prevent email, uid, or password from being updated
+  // Keep account type immutable during profile updates.
   const {
     email: _email,
     uid: _uid,
     password: _password,
+    type: _type,
+    role: _role,
+    verified: _verified,
+    requestedType: _requestedType,
+    active: _active,
+    followersCount: _followersCount,
+    followingCount: _followingCount,
     ...cleanUpdates
   } = updates;
 
   const now = Date.now();
   const payload = {
     ...cleanUpdates,
-    ...((existingUser?.requestedType === "doctor" || cleanUpdates.specialty) &&
-    existingUser?.type !== "doctor"
-      ? { type: "doctor" }
-      : {}),
     lastSeen: now,
     updatedAt: new Date().toISOString(),
   };
@@ -312,8 +322,7 @@ export async function updateUserProfile(uid, updates) {
 
   // Sync doctor certificates if doctor verification fields are updated
   if (
-    (existingUser?.type === "doctor" ||
-      existingUser?.requestedType === "doctor") &&
+    existingUser?.type === "doctor" &&
     (cleanUpdates.specialty ||
       cleanUpdates.licenseNumber ||
       cleanUpdates.licenseIssuer ||
@@ -424,12 +433,49 @@ export async function updateUserProfile(uid, updates) {
     }
   }
 
-  return await getUser(uid);
+  const updatedUser = await getUser(uid);
+  await syncPublicProfile(uid);
+  return updatedUser;
 }
 
 export async function deleteUserData(uid) {
-  await userRef(uid).remove();
-  // TODO: also delete this user's related data (posts, comments, messages, uploaded files).
+  const [followersSnapshot, followingSnapshot, familySnapshot] =
+    await Promise.all([
+      adminRTDB.ref(`followers/${uid}`).get(),
+      adminRTDB.ref(`following/${uid}`).get(),
+      adminRTDB.ref(`family/${uid}`).get(),
+    ]);
+  const followerUids = Object.keys(followersSnapshot.val() ?? {});
+  const followingUids = Object.keys(followingSnapshot.val() ?? {});
+  const familyUids = Object.keys(familySnapshot.val() ?? {});
+  const updates = {
+    [`users/${uid}`]: null,
+    [`publicProfiles/${uid}`]: null,
+    [`publicFollowers/${uid}`]: null,
+    [`followers/${uid}`]: null,
+    [`following/${uid}`]: null,
+    [`family/${uid}`]: null,
+    [`doctorCertificates/${uid}`]: null,
+  };
+
+  for (const followerUid of followerUids) {
+    updates[`following/${followerUid}/${uid}`] = null;
+  }
+  for (const followingUid of followingUids) {
+    updates[`followers/${followingUid}/${uid}`] = null;
+    updates[`publicFollowers/${followingUid}/${uid}`] = null;
+  }
+  for (const familyUid of familyUids) {
+    updates[`family/${familyUid}/${uid}`] = null;
+    updates[`users/${familyUid}/family/${uid}`] = null;
+  }
+
+  await adminRTDB.ref().update(updates);
+  await Promise.all(
+    [...new Set([...followerUids, ...followingUids])].map((relatedUid) =>
+      syncPublicProfile(relatedUid),
+    ),
+  );
 }
 
 export const RECIPROCAL_RELATIONSHIPS = {

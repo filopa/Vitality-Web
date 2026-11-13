@@ -1,0 +1,35 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      ".indexOn": [
+        "username",
+        "email",
+        "name"
+      ],
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "publicProfiles": {
+      ".read": true,
+      ".indexOn": ["username"]
+    },
+    "followers": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "following": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "publicFollowers": {
+      "$uid": {
+        ".read": "root.child('users').child($uid).child('showFollowers').val() === true"
+      }
+    }
+  }
+}

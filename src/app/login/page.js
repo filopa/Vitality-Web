@@ -3,6 +3,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import ThemeToggle from "../theme-toggle";
 import { LoginForm } from "./LoginForm";
+import { Shield } from "lucide-react";
+import { useApp } from "@/lib/AppProvider";
 
 export const metadata = {
   title: "Log in – Vitality",
@@ -48,13 +50,8 @@ export default function LoginPage() {
 
         {/* Privacy note */}
         <div className="flex items-center justify-center gap-2 rounded-xl border border-primary/10 bg-accent px-[17px] py-[11px]">
-          <Image
-            src="/images/register/shield-icon.svg"
-            width={10.67}
-            height={13.33}
-            alt=""
-            aria-hidden
-          />
+             <Shield />
+
           <p className="text-sm leading-5 text-muted">
             Your connection is encrypted and secure.
           </p>
@@ -68,12 +65,6 @@ export default function LoginPage() {
           </Link>
         </p>
 
-        <p className="pb-8 text-center text-sm leading-5 text-muted">
-          Are you a healthcare professional?{" "}
-          <Link href="/signup/doctor" className="font-semibold text-primary hover:underline">
-            Join as a doctor →
-          </Link>
-        </p>
       </div>
     </main>
   );

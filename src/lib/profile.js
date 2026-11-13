@@ -105,6 +105,8 @@ export function toPublicProfile(profile) {
     vitals: profile.vitals ?? null,
     emergencyContact: profile.emergencyContact ?? profile.emergency ?? null,
     family: profile.family ?? {},
+    showFollowers: profile.showFollowers === true,
+    followersCount: profile.followersCount ?? 0,
     active: profile.active ?? true,
     lastSeen: profile.lastSeen ?? null,
     type: profile.type ?? "user",

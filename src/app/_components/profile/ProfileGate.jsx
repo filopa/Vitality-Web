@@ -1,9 +1,9 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
-import { authedFetch } from "@/lib/client/api";
+import { useEffect } from "react";
 import { useApp } from "@/lib/AppProvider";
+import { getMissingFields } from "@/lib/profile";
 
 // Pages that never force the "complete your profile" step.
 const EXEMPT_PATHS = [
@@ -14,7 +14,6 @@ const EXEMPT_PATHS = [
   "/terms",
   "/privacy",
   "/complete-profile",
-  "/profile",
 ];
 
 const isExempt = (pathname) =>
@@ -31,45 +30,29 @@ const isExempt = (pathname) =>
 export default function ProfileGate() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, loading } = useApp();
-  const completedUid = useRef(null); // skip re-checking once we know the profile is complete
+  const { user, userData, profileError, loading } = useApp();
 
   useEffect(() => {
+    if (user && ["/login", "/signup", "/register"].includes(pathname)) {
+      if (loading || profileError || !userData) return;
+      router.replace(
+        getMissingFields(userData).length ? "/complete-profile" : "/home",
+      );
+      return;
+    }
     if (isExempt(pathname) || loading) return;
     if (!user) {
       router.replace("/login");
       return;
     }
+    if (profileError) return;
 
-    let cancelled = false;
-    if (completedUid.current === user.uid) return;
+    if (userData && getMissingFields(userData).length === 0) {
+      return;
+    }
 
-    (async () => {
-      try {
-        const res = await authedFetch("/api/auth/user/profile");
-        const json = await res.json();
-        if (cancelled) return;
-        if (res.status === 401) {
-          router.replace("/login");
-          return;
-        }
-        if (!res.ok || !json.success) {
-          throw new Error(json.message ?? "Profile verification failed.");
-        }
-
-        if (json.data.profileComplete) completedUid.current = user.uid;
-        else router.replace("/complete-profile");
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Profile verification failed:", error);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname, router, user, loading]);
+    router.replace("/complete-profile");
+  }, [pathname, router, user, userData, profileError, loading]);
 
   return null;
 }

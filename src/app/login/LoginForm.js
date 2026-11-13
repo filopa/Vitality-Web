@@ -4,9 +4,13 @@ import { Lock, Mail } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
-import { confirmBackendSession } from "@/lib/client/api";
+import {
+  GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+} from "firebase/auth";
+import { auth, ensureFirebaseAuthPersistence } from "@/lib/firebase";
+import { authedFetch } from "@/lib/client/api";
 import { useApp } from "@/lib/AppProvider";
 import { InputField } from "../_components/Inputfield";
 
@@ -74,10 +78,9 @@ function getSafeRedirect(value) {
 
 export function LoginForm() {
   const router = useRouter();
-  const { refreshSession } = useApp();
+  const { refreshUserData } = useApp();
   const searchParams = useSearchParams();
   const redirectPath = getSafeRedirect(searchParams.get("redirect"));
-
   const [submitting, setSubmitting] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -109,69 +112,45 @@ export function LoginForm() {
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/auth/signin", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.toLowerCase(), password }),
-      });
-
-      const json = await res.json();
-
-      if (!res.ok || !json.success) {
-        if (json.code === "INVALID_CREDENTIALS") {
-          // General error message without revealing which field was incorrect
-          setServerError("Invalid email or password. Please try again.");
-        } else if (json.code === "TOO_MANY_REQUESTS") {
-          setServerError("Too many failed attempts. Please wait a few minutes before trying again.");
-        } else if (json.code === "VALIDATION_ERROR" && json.errors) {
-          setFieldErrors(json.errors);
-        } else {
-          setServerError(json.message ?? "An error occurred while logging in. Please try again.");
-        }
-        return;
-      }
-
-      await confirmBackendSession();
-      if (!(await refreshSession())) {
-        throw new Error("The server session could not be loaded.");
-      }
+      await ensureFirebaseAuthPersistence();
+      await signInWithEmailAndPassword(auth, email.toLowerCase(), password);
+      await refreshUserData();
 
       // Redirect to destination
       router.push(redirectPath);
       router.refresh();
-    } catch {
-      setServerError("Network error. Please check your internet connection.");
+    } catch (error) {
+      if (
+        error?.code === "auth/invalid-credential" ||
+        error?.code === "auth/user-not-found" ||
+        error?.code === "auth/wrong-password"
+      ) {
+        setServerError("Invalid email or password. Please try again.");
+      } else if (error?.code === "auth/too-many-requests") {
+        setServerError(
+          "Too many failed attempts. Please wait a few minutes before trying again.",
+        );
+      } else {
+        console.error("Email sign-in failed:", error);
+        setServerError("We couldn't log in. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
   // ── Google Sign In ────────────────────────────────────────────────────────
-  // Firebase is used ONLY to get the Google account data + ID token for the backend.
-  // Login succeeds only if the backend accepts it, and the Firebase session is always closed afterwards.
   async function handleGoogle() {
     setGoogleLoading(true);
     setServerError("");
     let destination = null;
 
     try {
+      await ensureFirebaseAuthPersistence();
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      const { user } = result;
-      const idToken = await user.getIdToken();
-
-      const res = await fetch("/api/auth/google-signin", {
+      const res = await authedFetch("/api/auth/google-signin", {
         method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          uid: user.uid,
-          name: user.displayName || "",
-          email: user.email || "",
-          photoURL: user.photoURL || "",
-          idToken,
-        }),
       });
 
       const json = await res.json();
@@ -180,34 +159,14 @@ export function LoginForm() {
         return;
       }
 
-      await confirmBackendSession();
-      if (!(await refreshSession())) {
-        throw new Error("The server session could not be loaded.");
-      }
-
-      // The server-issued HttpOnly cookie is verified before redirecting.
-      // New Google users go to home; existing users go to feed/redirect
+      await refreshUserData();
       destination = json.data?.isNew ? "/home" : redirectPath;
     } catch (err) {
       if (err?.code !== "auth/popup-closed-by-user") {
+        console.error("Google sign-in failed:", err);
         setServerError("Google sign-in failed. Please try again.");
       }
     } finally {
-      // Always close the Firebase session, whether the attempt succeeded or failed.
-      try {
-        await signOut(auth);
-      } catch (signOutError) {
-        console.error("Firebase sign-out failed:", signOutError);
-        destination = null;
-        setServerError("Google sign-out failed. Please try again.");
-        await fetch("/api/auth/session", {
-          method: "DELETE",
-          credentials: "same-origin",
-        }).catch((logoutError) => {
-          console.error("Backend sign-out after Firebase failure failed:", logoutError);
-        });
-      }
-
       setGoogleLoading(false);
 
       if (destination) {

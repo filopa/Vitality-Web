@@ -1,18 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { signOut } from "firebase/auth";
 import { authedFetch } from "@/lib/client/api";
-
-async function endSession() {
-  const response = await fetch("/api/auth/session", {
-    method: "DELETE",
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error("We couldn't sign you out. Please try again.");
-  }
-  window.location.assign("/");
-}
+import { auth } from "@/lib/firebase";
 
 export function AccountActions() {
   const [confirming, setConfirming] = useState(false);
@@ -22,9 +13,11 @@ export function AccountActions() {
   async function handleSignOut() {
     setError("");
     try {
-      await endSession();
+      await signOut(auth);
+      window.location.assign("/");
     } catch (err) {
-      setError(err.message || "We couldn't sign you out. Please try again.");
+      console.error("Firebase sign-out failed:", err);
+      setError("We couldn't sign you out. Please try again.");
     }
   }
 
@@ -35,8 +28,18 @@ export function AccountActions() {
       const res = await authedFetch("/api/auth/user", { method: "DELETE" });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.message);
+      try {
+        await signOut(auth);
+      } catch (signOutError) {
+        console.error(
+          "Firebase sign-out after account deletion failed:",
+          signOutError,
+        );
+        window.dispatchEvent(new Event("vitality:auth-token-rejected"));
+      }
       window.location.assign("/");
     } catch (err) {
+      console.error("Account deletion failed:", err);
       setError(err.message || "We couldn't delete your account. Please try again.");
       setDeleting(false);
     }

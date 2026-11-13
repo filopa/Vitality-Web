@@ -4,15 +4,20 @@ import { ArrowLeft, ArrowRight, RotateCcwKey } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 import { useApp } from "@/lib/AppProvider";
-import { confirmBackendSession } from "@/lib/client/api";
+import { auth, ensureFirebaseAuthPersistence } from "@/lib/firebase";
+import { authedFetch } from "@/lib/client/api";
 import { useSignupFlow } from "../SignupFlowProvider";
 
 const CODE_LENGTH = 5;
 
 export default function Page() {
   const router = useRouter();
-  const { refreshSession } = useApp();
+  const { refreshUserData } = useApp();
   const { pendingSignup, setPendingSignup } = useSignupFlow();
   const [digits, setDigits] = useState(Array(CODE_LENGTH).fill(""));
   const [loading, setLoading] = useState(false);
@@ -54,34 +59,79 @@ export default function Page() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/auth/signup", {
+      const normalizedEmail = pendingSignup.email.toLowerCase();
+      await ensureFirebaseAuthPersistence();
+      let firebaseUser = auth.currentUser;
+      if (
+        firebaseUser &&
+        (firebaseUser.email?.toLowerCase() !== normalizedEmail ||
+          !firebaseUser.providerData.some(
+            (provider) => provider.providerId === "password",
+          ))
+      ) {
+        setError("Sign out of the current account before creating a new one.");
+        return;
+      }
+
+      const verificationResponse = await fetch("/api/auth/signup/verify-code", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...pendingSignup,
+          email: pendingSignup.email,
           verificationCode: digits.join(""),
         }),
       });
-      const result = await response.json();
-      if (!response.ok || !result.success) {
-        setError(result.message ?? "The code could not be verified.");
+      const verificationResult = await verificationResponse.json();
+      if (!verificationResponse.ok || !verificationResult.success) {
+        setError(verificationResult.message ?? "The code could not be verified.");
         if (
-          result.code === "INVALID_VERIFICATION_CODE" ||
-          result.code === "VERIFICATION_CODE_NOT_FOUND" ||
-          result.code === "VERIFICATION_CODE_EXPIRED" ||
-          result.code === "VERIFICATION_CODE_LOCKED"
+          verificationResult.code === "INVALID_VERIFICATION_CODE" ||
+          verificationResult.code === "VERIFICATION_CODE_NOT_FOUND" ||
+          verificationResult.code === "VERIFICATION_CODE_EXPIRED" ||
+          verificationResult.code === "VERIFICATION_CODE_LOCKED"
         ) {
           setDigits(Array(CODE_LENGTH).fill(""));
-          if (result.code !== "INVALID_VERIFICATION_CODE") focusAt(0);
+          if (verificationResult.code !== "INVALID_VERIFICATION_CODE") focusAt(0);
         }
         return;
       }
 
-      await confirmBackendSession();
-      if (!(await refreshSession())) {
-        throw new Error("The new account session could not be loaded.");
+      if (!firebaseUser) {
+        try {
+          const credential = await createUserWithEmailAndPassword(
+            auth,
+            normalizedEmail,
+            pendingSignup.password,
+          );
+          firebaseUser = credential.user;
+        } catch (error) {
+          if (error?.code !== "auth/email-already-in-use") throw error;
+          const credential = await signInWithEmailAndPassword(
+            auth,
+            normalizedEmail,
+            pendingSignup.password,
+          );
+          firebaseUser = credential.user;
+        }
       }
+
+      const signupProfile = { ...pendingSignup };
+      delete signupProfile.password;
+      const response = await authedFetch("/api/auth/signup", {
+        method: "POST",
+        body: JSON.stringify({
+          ...signupProfile,
+          verificationTicket: verificationResult.verificationTicket,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setError(result.message ?? "We couldn't finish creating your account.");
+        return;
+      }
+
+      await firebaseUser.getIdToken(true);
+      await refreshUserData();
       setPendingSignup(null);
       router.replace("/home");
       router.refresh();

@@ -5,12 +5,12 @@ import {
   AlertCircle,
   Award,
   Bell,
-  BriefcaseMedical,
   Building2,
   Calendar,
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock,
   Copy,
@@ -28,14 +28,10 @@ import {
   Pencil,
   Phone,
   Plus,
-  RefreshCw,
   Ruler,
   Scale,
   Share2,
   ShieldCheck,
-  Sparkles,
-  Stethoscope,
-  Trash2,
   Upload,
   User,
   UserPlus,
@@ -45,54 +41,23 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import BottomNav from "@/app/_components/dashboard/BottomNav";
-import ThemeToggle from "@/app/theme-toggle";
+
 import { useApp } from "@/lib/AppProvider";
 import { authedFetch } from "@/lib/client/api";
-import { auth } from "@/lib/firebase";
-
+import { auth, ensureFirebaseAuthPersistence, rtdb } from "@/lib/firebase";
+import { EditProfileForm } from "../_components/profile/EditProfileForm";
+import DashboardHeader from "../_components/dashboard/DashboardHeader";
+import { uploadToStorage } from "@/lib/client/upload";
+import { onValue, push, ref, update } from "firebase/database";
+import { EditVitals } from "../_components/profile/EditVitals";
+import { UserSearchBox } from "../_components/users/UserSearchBox";
+import { getUsersByIds } from "@/lib/client/users";
 const GLASS_CARD =
   "rounded-2xl border border-border/70 bg-surface/90 text-surface-foreground shadow-[0_4px_16px_rgba(15,23,42,0.04)] backdrop-blur-sm transition-all hover:border-border hover:shadow-[0_6px_24px_rgba(15,23,42,0.07)]";
 
 // Compress client uploaded image to lightweight WebP data URL
-function compressImage(dataUrl, maxWidth, maxHeight, quality = 0.85) {
-  return new Promise((resolve) => {
-    const img = new window.Image();
-    img.onload = () => {
-      let width = img.width;
-      let height = img.height;
-
-      if (width > height) {
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
-        }
-      } else {
-        if (height > maxHeight) {
-          width = Math.round((width * maxHeight) / height);
-          height = maxHeight;
-        }
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, width, height);
-
-      try {
-        const webpUrl = canvas.toDataURL("image/webp", quality);
-        if (webpUrl.startsWith("data:image/webp")) {
-          resolve(webpUrl);
-          return;
-        }
-      } catch {}
-      resolve(canvas.toDataURL("image/jpeg", quality));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
-}
 
 function calculateAge(birthdayStr) {
   if (!birthdayStr) return null;
@@ -113,7 +78,6 @@ function formatMemberDate(timestamp) {
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
-
 // ─── File drop zone for doctor document uploads ──────────────────────────────
 function FileDropZone({
   label,
@@ -154,15 +118,14 @@ function FileDropZone({
           const dropped = e.dataTransfer.files?.[0];
           if (dropped) onFileChange(dropped);
         }}
-        className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition ${
-          dragging
-            ? "border-primary bg-primary/5"
-            : error
-              ? "border-red-400 bg-red-50 dark:bg-red-950/20"
-              : displayFileName
-                ? "border-primary/50 bg-primary/5"
-                : "border-border bg-surface hover:border-primary/50"
-        }`}
+        className={`relative flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition ${dragging
+          ? "border-primary bg-primary/5"
+          : error
+            ? "border-red-400 bg-red-50 dark:bg-red-950/20"
+            : displayFileName
+              ? "border-primary/50 bg-primary/5"
+              : "border-border bg-surface hover:border-primary/50"
+          }`}
       >
         {displayFileName ? (
           <>
@@ -257,10 +220,9 @@ const RELATIONSHIP_LABELS = {
 };
 
 export default function ProfileView() {
-  const { userData, refreshSession } = useApp();
+  const { user, userData, refreshUserData } = useApp();
   const fileInputRef = useRef(null);
 
-  // Profile data state matching RTDB schema (automatically using Google photo if available)
   const [profile, setProfile] = useState({
     uid: userData?.uid || "",
     name: userData?.name || "User",
@@ -286,7 +248,7 @@ export default function ProfileView() {
     verified: userData?.verified || false,
     certificates: userData?.certificates || [],
     family: userData?.family || {},
-    avatarUrl:
+    avatarURL:
       userData?.urlProfile ||
       userData?.photoURL ||
       userData?.avatarURL ||
@@ -299,24 +261,17 @@ export default function ProfileView() {
       "",
   });
 
-  // Track whether real vitals were entered by the user
-  const [hasVitals, setHasVitals] = useState(
-    Boolean(
-      userData?.vitals && (userData.vitals.height || userData.vitals.weight),
-    ),
-  );
 
-  // Track whether real credentials were provided for doctor
+
   const [hasDoctorCredentials, setHasDoctorCredentials] = useState(
     Boolean(
       userData?.licenseNumber &&
-        (userData?.licenseIssuer ||
-          userData?.specialty ||
-          userData?.licenseDoc),
+      (userData?.licenseIssuer ||
+        userData?.specialty ||
+        userData?.licenseDoc),
     ),
   );
 
-  // Health Metrics / Vitals State (default example values shown when empty)
   const [vitals, setVitals] = useState({
     height: userData?.vitals?.height || null,
     weight: userData?.vitals?.weight || null,
@@ -363,35 +318,26 @@ export default function ProfileView() {
   const [isEditVitalsOpen, setIsEditVitalsOpen] = useState(false);
   const [isEditEmergencyOpen, setIsEditEmergencyOpen] = useState(false);
   const [isEditCredentialsOpen, setIsEditCredentialsOpen] = useState(false);
-  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [percent, setPercent] = useState(false);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isAddFamilyOpen, setIsAddFamilyOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
-
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [savingVitals, setSavingVitals] = useState(false);
   const [savingEmergency, setSavingEmergency] = useState(false);
   const [savingCredentials, setSavingCredentials] = useState(false);
   const [addingFamily, setAddingFamily] = useState(false);
   const [removingFamilyId, setRemovingFamilyId] = useState(null);
-  const [familyUsername, setFamilyUsername] = useState("");
-  const [familyType, setFamilyType] = useState("parent");
+  const [familyArr, setFamilyArr] = useState([]);
+  const [familyType, setFamilyType] = useState([]);
   const [familyError, setFamilyError] = useState("");
-  const [photoActionLoading, setPhotoActionLoading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-
+  const [followersDialog, setFollowersDialog] = useState(false);
+  const [followingDialog, setFollowingDialog] = useState(false);
+  const [followers, setFollowers] = useState({});
+  const [following, setFollowing] = useState({});
   const [toastMessage, setToastMessage] = useState("");
   const [formError, setFormError] = useState("");
-
-  // Temporary edit states
-  const [tempProfile, setTempProfile] = useState(profile);
-  const [tempVitals, setTempVitals] = useState({
-    height: vitals.height || 172,
-    weight: vitals.weight || 64.5,
-    bloodType: vitals.bloodType || "A+",
-    bloodRh: vitals.bloodRh || "POS",
-  });
+  const followerCount = Object.keys(followers).length;
+  const followingCount = Object.keys(following).length;
   const [tempEmergency, setTempEmergency] = useState(emergencyContact);
   const [tempCredentials, setTempCredentials] = useState({
     specialty: profile.specialty || "",
@@ -404,154 +350,222 @@ export default function ProfileView() {
     degreeYear: profile.degreeYear || "",
     degreeDoc: profile.degreeDoc || "",
   });
+  const [followersData, setFollowersData] = useState([]);
+  const [followersLoading, setFollowersLoading] = useState(false);
   const [tempLicenseFile, setTempLicenseFile] = useState(null);
   const [tempDegreeFile, setTempDegreeFile] = useState(null);
+  const [selected, setSelected] = useState([]);
 
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(""), 3500);
   };
-
-  // Sync state whenever userData updates from AppProvider
   useEffect(() => {
-    if (userData) {
-      const userHasVitals = Boolean(
-        userData.vitals && (userData.vitals.height || userData.vitals.weight),
-      );
-      setHasVitals(userHasVitals);
+    let active = true;
+    let unsubscribeAuth = () => { };
+    let unsubscribeUser = () => { };
+    let unsubscribeFollowers = () => { };
+    let unsubscribeFollowing = () => { };
+    let unsubscribeFamily = () => { };
+    ensureFirebaseAuthPersistence()
+      .then(() => {
+        if (!active) return;
 
-      const doctorHasCreds = Boolean(
-        userData.licenseNumber &&
-          (userData.licenseIssuer || userData.specialty || userData.licenseDoc),
-      );
-      setHasDoctorCredentials(doctorHasCreds);
+        unsubscribeAuth = onAuthStateChanged(
+          auth,
+          (firebaseUser) => {
+            unsubscribeUser();
+            unsubscribeFollowers();
+            unsubscribeFollowing();
+            unsubscribeUser = () => { };
+            unsubscribeFollowers = () => { };
+            unsubscribeFollowing = () => { };
+            unsubscribeFamily = () => { };
 
-      setProfile((prev) => ({
-        ...prev,
-        uid: userData.uid || prev.uid,
-        name: userData.name || prev.name,
-        username: userData.username || prev.username,
-        email: userData.email || prev.email,
-        phone: userData.phone || prev.phone,
-        country: userData.country || prev.country,
-        gender: userData.gender || prev.gender,
-        birthday: userData.birthday || prev.birthday,
-        bio: userData.bio || prev.bio,
-        type: userData.type || prev.type,
-        specialty: userData.specialty || prev.specialty,
-        licenseNumber: userData.licenseNumber || prev.licenseNumber,
-        licenseIssuer: userData.licenseIssuer || prev.licenseIssuer,
-        licenseYear: userData.licenseYear || prev.licenseYear,
-        licenseDoc: userData.licenseDoc || prev.licenseDoc,
-        licenseStatus: userData.licenseStatus || prev.licenseStatus,
-        degreeTitle: userData.degreeTitle || prev.degreeTitle,
-        degreeIssuer: userData.degreeIssuer || prev.degreeIssuer,
-        degreeYear: userData.degreeYear || prev.degreeYear,
-        degreeDoc: userData.degreeDoc || prev.degreeDoc,
-        degreeStatus: userData.degreeStatus || prev.degreeStatus,
-        verified: userData.verified ?? prev.verified,
-        certificates: userData.certificates || prev.certificates,
-        family: userData.family || prev.family || {},
-        avatarUrl:
-          userData.urlProfile ||
-          userData.photoURL ||
-          userData.avatarURL ||
-          userData.urlAvatar ||
-          auth.currentUser?.photoURL ||
-          prev.avatarUrl,
-        memberSince: userData.createdAt
-          ? new Date(userData.createdAt).toLocaleDateString("en-US", {
-              month: "long",
-              year: "numeric",
-            })
-          : prev.memberSince,
-      }));
+            setFollowers({});
+            setFollowing({});
+            setFamilyArr({});
 
-      if (userData.vitals) {
-        setVitals(userData.vitals);
-      }
-      if (userData.emergencyContact) {
-        setEmergencyContact(userData.emergencyContact);
-      }
-    }
-  }, [userData]);
+            unsubscribeFollowers = onValue(
+              ref(rtdb, `followers/${firebaseUser.uid}`),
+              (snapshot) => {
+                if (active && auth.currentUser?.uid === firebaseUser.uid) {
+                  setFollowers(snapshot.val() ?? {});
+                }
+              },
+              (error) => {
+                console.error("Firebase followers subscription failed:", error);
+              },
+            );
 
-  // Query real profile on mount to ensure RTDB fresh data
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchRealProfile() {
-      try {
-        const res = await authedFetch("/api/auth/user/profile");
-        const json = await res.json();
-        if (cancelled) return;
-        if (res.ok && json.success && json.data?.profile) {
-          const p = json.data.profile;
-          const userHasVitals = Boolean(
-            p.vitals && (p.vitals.height || p.vitals.weight),
-          );
-          setHasVitals(userHasVitals);
+            unsubscribeFollowing = onValue(
+              ref(rtdb, `following/${firebaseUser.uid}`),
+              (snapshot) => {
+                if (active && auth.currentUser?.uid === firebaseUser.uid) {
+                  setFollowing(snapshot.val() ?? {});
+                }
+              },
+              (error) => {
+                console.error("Firebase following subscription failed:", error);
+              },
+            );
+            
+            unsubscribeFamily = onValue(
+              ref(rtdb, `family/${firebaseUser.uid}`),
+              (snapshot) => {
+                if (active && auth.currentUser?.uid === firebaseUser.uid) {
+                  setFamilyArr(snapshot.val() ?? {});
+                }
+              },
+              (error) => {
+                console.error("Firebase family subscription failed:", error);
+              },
+            );
 
-          const doctorHasCreds = Boolean(
-            p.licenseNumber && (p.licenseIssuer || p.specialty || p.licenseDoc),
-          );
-          setHasDoctorCredentials(doctorHasCreds);
+          },
+          (error) => {
+            console.error("Firebase Auth state subscription failed:", error);
+            if (active) ;
+          },
+        );
+      })
+      .catch((error) => {
+        console.error("Firebase Auth persistence initialization failed:", error);
+        if (active) ;
+      });
 
-          setProfile({
-            uid: p.uid || "",
-            name: p.name || "User",
-            username: p.username || "",
-            email: p.email || "",
-            phone: p.phone || "",
-            country: p.country || "",
-            gender: p.gender || "",
-            birthday: p.birthday || "",
-            bio: p.bio || "",
-            type: p.type || "user",
-            specialty: p.specialty || "",
-            licenseNumber: p.licenseNumber || "",
-            licenseIssuer: p.licenseIssuer || "",
-            licenseYear: p.licenseYear || "",
-            licenseDoc: p.licenseDoc || "",
-            licenseStatus: p.licenseStatus || "padding",
-            degreeTitle: p.degreeTitle || "",
-            degreeIssuer: p.degreeIssuer || "",
-            degreeYear: p.degreeYear || "",
-            degreeDoc: p.degreeDoc || "",
-            degreeStatus: p.degreeStatus || "padding",
-            verified: p.verified || false,
-            certificates: Array.isArray(p.certificates) ? p.certificates : [],
-            family: p.family || {},
-            avatarUrl:
-              p.urlProfile ||
-              p.photoURL ||
-              p.avatarURL ||
-              p.urlAvatar ||
-              auth.currentUser?.photoURL ||
-              "",
-            memberSince:
-              formatMemberDate(p.createdAt) ||
-              formatMemberDate(auth.currentUser?.metadata?.creationTime) ||
-              "",
-          });
-          if (p.vitals) setVitals(p.vitals);
-          if (p.emergencyContact) setEmergencyContact(p.emergencyContact);
-        }
-      } catch (err) {
-        console.error("Could not fetch user profile:", err);
-      }
-    }
-    fetchRealProfile();
     return () => {
-      cancelled = true;
+      active = false;
+      unsubscribeAuth();
+      unsubscribeUser();
+      unsubscribeFollowers();
+      unsubscribeFollowing();
     };
   }, []);
 
-  const isDoctor =
-    profile.type === "doctor" || profile.requestedType === "doctor";
+  useEffect(() => {
+    if (!userData) return;
+    const vitals = onValue(ref(rtdb, `records/${userData.uid}/vitals`), (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setVitals({
+          height: data.height || "",
+          weight: data.weight || "",
+          bloodType: data.bloodType || "O",
+          bloodRh: data.bloodRh || "POS",
+        });
+      }
+    });
+
+    setHasDoctorCredentials(
+      Boolean(
+        userData.licenseNumber &&
+        (userData.licenseIssuer ||
+          userData.specialty ||
+          userData.licenseDoc),
+      ),
+    );
+    setProfile({
+      uid: userData.uid || "",
+      name: userData.name || "User",
+      username: userData.username || "",
+      email: userData.email || "",
+      phone: userData.phone || "",
+      country: userData.country || "",
+      gender: userData.gender || "",
+      birthday: userData.birthday || "",
+      bio: userData.bio || "",
+      type: userData.type || "user",
+      specialty: userData.specialty || "",
+      licenseNumber: userData.licenseNumber || "",
+      licenseIssuer: userData.licenseIssuer || "",
+      licenseYear: userData.licenseYear || "",
+      licenseDoc: userData.licenseDoc || "",
+      licenseStatus: userData.licenseStatus || "padding",
+      degreeTitle: userData.degreeTitle || "",
+      degreeIssuer: userData.degreeIssuer || "",
+      degreeYear: userData.degreeYear || "",
+      degreeDoc: userData.degreeDoc || "",
+      degreeStatus: userData.degreeStatus || "padding",
+      verified: userData.verified || false,
+      certificates: Array.isArray(userData.certificates)
+        ? userData.certificates
+        : [],
+      avatarURL:
+        userData.urlProfile ||
+        userData.photoURL ||
+        userData.avatarURL ||
+        userData.urlAvatar ||
+        user?.photoURL ||
+        "",
+      memberSince:
+        formatMemberDate(userData.createdAt) ||
+        formatMemberDate(user?.metadata?.creationTime) ||
+        "",
+    });
+    setEmergencyContact(
+      userData.emergencyContact ?? {
+        name: "",
+        relationship: "",
+        phone: "",
+        notes: "",
+      },
+    );
+    return () => vitals();
+  }, [userData, user]);
+
+  useEffect(() => {
+    if (followersDialog) {
+      const loadFollowers = async () => {
+        setFollowersLoading(true);
+
+        try {
+          const people = await getUsersByIds(Object.keys(followers || {}));
+
+          console.log("people", people);
+
+          setFollowersData(
+            Array.from(people.values())
+          );
+        } catch (error) {
+          console.error("Failed to load followers:", error);
+          setFollowersData([]);
+        } finally {
+          setFollowersLoading(false);
+        }
+      };
+      loadFollowers();
+    }
+    if (followingDialog) {
+      const loadFollowing = async () => {
+        setFollowersLoading(true);
+
+        try {
+          const people = await getUsersByIds(Object.keys(following || {}));
+
+          console.log("people", people);
+
+          setFollowersData(
+            Array.from(people.values())
+          );
+        } catch (error) {
+          console.error("Failed to load following:", error);
+          setFollowersData([]);
+        } finally {
+          setFollowersLoading(false);
+        }
+      };
+
+
+      loadFollowing();
+    }
+
+  }, [followersDialog, followingDialog, followers, following]);
+  const isDoctor = profile.type === "doctor";
 
   // BMI calculation (uses real values if saved, else example 172cm / 64.5kg)
-  const displayHeight = hasVitals ? vitals.height : 172;
-  const displayWeight = hasVitals ? vitals.weight : 64.5;
+  const displayHeight = vitals ? vitals.height : 172;
+  const displayWeight = vitals ? vitals.weight : 64.5;
   const bmi = (
     displayWeight /
     ((displayHeight / 100) * (displayHeight / 100))
@@ -571,90 +585,14 @@ export default function ProfileView() {
   const inches = Math.round(heightInInches % 12);
   const weightLbs = (displayWeight * 2.20462).toFixed(1);
   const userAge = calculateAge(profile.birthday);
+  const postCount = Number(userData?.postsCount);
+  const profileStats = [
+    { label: "posts", value: Number.isFinite(postCount) ? postCount : 0 },
+    { label: "following", value: followingCount },
+    { label: "followers", value: followerCount },
+  ];
 
   // ── Handlers ─────────────────────────────────────────────────────────────
-
-  // Save Personal Profile Info
-  const handleSaveProfile = async (e) => {
-    e.preventDefault();
-    setFormError("");
-    setSavingProfile(true);
-
-    try {
-      const payload = {
-        name: tempProfile.name.trim(),
-        username: tempProfile.username.trim().toLowerCase(),
-        phone: tempProfile.phone.trim(),
-        country: tempProfile.country.trim(),
-        gender: tempProfile.gender,
-        birthday: tempProfile.birthday,
-        bio: tempProfile.bio.trim(),
-        type: tempProfile.type,
-      };
-
-      const res = await authedFetch("/api/auth/user/profile", {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(
-          json.message ||
-            json.data?.errors?.username ||
-            "Failed to save profile changes.",
-        );
-      }
-
-      setProfile((prev) => ({ ...prev, ...payload }));
-      await refreshSession();
-      setIsEditProfileOpen(false);
-      showToast("Profile details updated in RTDB!");
-    } catch (err) {
-      setFormError(err.message || "Failed to update profile.");
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
-  // Save Vitals
-  const handleSaveVitals = async (e) => {
-    e.preventDefault();
-    setFormError("");
-    setSavingVitals(true);
-
-    try {
-      const payload = {
-        vitals: {
-          height: Number(tempVitals.height),
-          weight: Number(tempVitals.weight),
-          bloodType: tempVitals.bloodType,
-          bloodRh: tempVitals.bloodRh,
-          lastSynced: "Just now",
-        },
-      };
-
-      const res = await authedFetch("/api/auth/user/profile", {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || "Failed to save vitals.");
-      }
-
-      setVitals(payload.vitals);
-      setHasVitals(true);
-      await refreshSession();
-      setIsEditVitalsOpen(false);
-      showToast("Vitals saved to database!");
-    } catch (err) {
-      setFormError(err.message || "Could not save vitals.");
-    } finally {
-      setSavingVitals(false);
-    }
-  };
 
   // Save Emergency Contact
   const handleSaveEmergency = async (e) => {
@@ -683,7 +621,7 @@ export default function ProfileView() {
       }
 
       setEmergencyContact(payload.emergencyContact);
-      await refreshSession();
+      await refreshUserData();
       setIsEditEmergencyOpen(false);
       showToast("Emergency contact saved to database!");
     } catch (err) {
@@ -694,87 +632,172 @@ export default function ProfileView() {
   };
 
   // Photo Upload Handler (Device file upload)
-  const handleFileSelect = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      showToast("Please choose an image under 5MB.");
-      return;
+  async function convertImageToWebp(img, maxDimension, quality) {
+    let width = img.width;
+    let height = img.height;
+
+    if (width > maxDimension || height > maxDimension) {
+      if (width >= height) {
+        height = Math.round((height * maxDimension) / width);
+        width = maxDimension;
+      } else {
+        width = Math.round((width * maxDimension) / height);
+        height = maxDimension;
+      }
     }
 
-    setPhotoActionLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const rawDataUrl = event.target?.result;
-        if (typeof rawDataUrl !== "string") return;
+    const canvas = document.createElement("canvas");
 
-        // Compress to responsive WebP
-        const compressedWebp = await compressImage(rawDataUrl, 400, 400, 0.85);
+    canvas.width = width;
+    canvas.height = height;
 
-        const res = await authedFetch("/api/auth/user/profile", {
-          method: "PATCH",
-          body: JSON.stringify({
-            urlProfile: compressedWebp,
-            urlAvatar: compressedWebp,
-            photoURL: compressedWebp,
-            avatarURL: compressedWebp,
-          }),
-        });
+    const ctx = canvas.getContext("2d");
 
-        const json = await res.json();
-        if (!res.ok || !json.success) {
-          throw new Error(json.message || "Photo upload failed.");
-        }
+    if (!ctx) {
+      throw new Error("Could not create canvas context");
+    }
 
-        setProfile((prev) => ({ ...prev, avatarUrl: compressedWebp }));
-        await refreshSession();
-        setIsPhotoModalOpen(false);
-        showToast("Profile photo updated successfully!");
-      } catch (err) {
-        showToast(err.message || "Failed to upload photo.");
-      } finally {
-        setPhotoActionLoading(false);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-      }
-    };
-    reader.readAsDataURL(file);
-  };
+    ctx.drawImage(img, 0, 0, width, height);
 
-  // Remove photo
-  const handleRemovePhoto = async () => {
-    setPhotoActionLoading(true);
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error("Failed to convert image to WebP"));
+            return;
+          }
+
+          resolve(blob);
+        },
+        "image/webp",
+        quality
+      );
+    });
+  }
+
+
+  async function convertImageToTwoWebpVariants(file) {
+    const imageUrl = URL.createObjectURL(file);
+
     try {
-      const res = await authedFetch("/api/auth/user/profile", {
-        method: "PATCH",
-        body: JSON.stringify({
-          urlProfile: "",
-          urlAvatar: "",
-          photoURL: "",
-          avatarURL: "",
-        }),
+      const img = new window.Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error("Failed to load image"));
+        img.src = imageUrl;
       });
 
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || "Could not remove photo.");
+      const [mainBlob, thumbBlob] = await Promise.all([
+        convertImageToWebp(img, 1200, 0.85),
+        convertImageToWebp(img, 400, 0.75),
+      ]);
+
+      const baseName = file.name.replace(/\.[^/.]+$/, "");
+
+      const mainWebp = new File(
+        [mainBlob],
+        `${baseName}_main.webp`,
+        {
+          type: "image/webp",
+        }
+      );
+
+      const thumbWebp = new File(
+        [thumbBlob],
+        `${baseName}_thumb.webp`,
+        {
+          type: "image/webp",
+        }
+      );
+
+      return {
+        mainWebp,
+        thumbWebp,
+      };
+    } finally {
+      URL.revokeObjectURL(imageUrl);
+    }
+  }
+
+
+  async function handleChangeProfilePhoto(
+    originalFile,
+    setPercent,
+  ) {
+    try {
+      setPercent?.(5);
+
+      const { mainWebp, thumbWebp } =
+        await convertImageToTwoWebpVariants(originalFile);
+
+      setPercent?.(10);
+
+      const mainUploadResult = await uploadToStorage({
+        kind: "profile-photo",
+        file: mainWebp,
+
+        onProgress: (progress) => {
+          setPercent?.(10 + progress * 0.7);
+        },
+      });
+
+      const mainUrl =
+        mainUploadResult?.url || mainUploadResult;
+
+      const thumbUploadResult = await uploadToStorage({
+        kind: "profile-photo",
+        file: thumbWebp,
+
+        onProgress: (progress) => {
+          setPercent?.(80 + progress * 0.2);
+        },
+      });
+
+      const thumbUrl =
+        thumbUploadResult?.url || thumbUploadResult;
+
+      setPercent?.(100);
+
+      const profileDataToSave = {
+        avatarURL: mainUrl.publicUrl,
+        photoURL: thumbUrl.publicUrl,
+      };
+
+      if (profileDataToSave) {
+        const refdb = ref(rtdb, `users/${userData.uid}/`);
+        await update(refdb, profileDataToSave);
       }
 
-      setProfile((prev) => ({ ...prev, avatarUrl: "" }));
-      await refreshSession();
-      setIsPhotoModalOpen(false);
-      showToast("Profile photo removed.");
-    } catch (err) {
-      showToast(err.message || "Failed to remove photo.");
+      return {
+        mainUrl,
+        thumbUrl,
+      };
+
+    } catch (error) {
+      console.error("Failed to change profile photo:", error);
+      throw error;
+    }
+  }
+  const handleProfilePhotoChange = async (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    try {
+      await handleChangeProfilePhoto(
+        file,
+        setPercent,
+      );
+    } catch (error) {
+      console.error(error);
     } finally {
-      setPhotoActionLoading(false);
+      event.target.value = "";
     }
   };
 
   const publicIdentifier = profile.username || profile.uid || "";
   const publicProfilePath = `/profile/${publicIdentifier}`;
-
   const handleCopyPublicLink = async () => {
     try {
       const fullUrl = `${window.location.origin}${publicProfilePath}`;
@@ -928,7 +951,7 @@ export default function ProfileView() {
           : prev.certificates,
       }));
       setHasDoctorCredentials(true);
-      await refreshSession();
+      await refreshUserData();
       setIsEditCredentialsOpen(false);
       showToast("Doctor credentials updated in RTDB!");
     } catch (err) {
@@ -941,37 +964,77 @@ export default function ProfileView() {
   // Family Member Management (reciprocal relationships in RTDB)
   const handleAddFamilyMember = async (e) => {
     if (e) e.preventDefault();
+
+    if (!selected || selected.length === 0) return;
+
     setFamilyError("");
-    const cleanUser = familyUsername.trim().replace(/^@/, "").toLowerCase();
-    if (!cleanUser) {
-      setFamilyError("Please enter a username to link.");
-      return;
-    }
-    if (cleanUser === profile.username?.toLowerCase()) {
-      setFamilyError("You cannot add yourself as a family member.");
-      return;
-    }
     setAddingFamily(true);
+
     try {
-      const res = await authedFetch("/api/auth/user/family", {
-        method: "POST",
-        body: JSON.stringify({
-          username: cleanUser,
-          type: familyType,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        throw new Error(json.message || "Failed to link family member.");
+      const updates = {};
+
+      const reverseRelationship = {
+        parent: "child",
+        child: "parent",
+        sibling: "sibling",
+        spouse: "spouse",
+        grandparent: "grandchild",
+        grandchild: "grandparent",
+      };
+
+      const now = Date.now();
+
+      for (const item of selected) {
+        const uid = item.user?.uid;
+
+        const type = familyType.find(
+          (relation) => relation.uid === uid
+        )?.type;
+
+        if (!uid || !type) {
+          console.warn("Invalid selected item:", item);
+          continue;
+        }
+
+        const recipientRelationship =
+          reverseRelationship[type] || "family member";
+
+        updates[`family/${userData.uid}/${uid}`] = {
+          addedAt: now,
+          type,
+          id: uid,
+          accepted: false,
+        };
+
+        const notificationKey = push(
+          ref(rtdb, `notifications/${uid}`)
+        ).key;
+
+        updates[`notifications/${uid}/${notificationKey}`] = {
+          type: "familyLink",
+          from: userData.uid,
+          id: notificationKey,
+          createdAt: now,
+          title: `${userData.name} sent you a family link request`,
+          message: `${userData.name} sent you a request to be your ${recipientRelationship}.`,
+          read: false,
+        };
       }
-      const updatedFamily = json.data?.family || {};
-      setProfile((prev) => ({ ...prev, family: updatedFamily }));
-      setFamilyUsername("");
+
+      await update(ref(rtdb), updates);
+      setSelected([]);
       setIsAddFamilyOpen(false);
+
       showToast("Family member linked successfully!");
-      await refreshSession();
+      await refreshUserData();
+
     } catch (err) {
-      setFamilyError(err.message || "Could not link family member.");
+      console.error("Failed to link family member:", err);
+
+      setFamilyError(
+        err.message || "Could not link family member."
+      );
+
     } finally {
       setAddingFamily(false);
     }
@@ -981,12 +1044,7 @@ export default function ProfileView() {
     if (!targetUid) return;
     setRemovingFamilyId(targetUid);
     try {
-      const res = await authedFetch(
-        `/api/auth/user/family?targetUid=${targetUid}`,
-        {
-          method: "DELETE",
-        },
-      );
+
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.message || "Failed to remove family member.");
@@ -994,7 +1052,7 @@ export default function ProfileView() {
       const updatedFamily = json.data?.family || {};
       setProfile((prev) => ({ ...prev, family: updatedFamily }));
       showToast("Family member removed.");
-      await refreshSession();
+      await refreshUserData();
     } catch (err) {
       showToast(err.message || "Could not remove family member.");
     } finally {
@@ -1003,9 +1061,7 @@ export default function ProfileView() {
   };
 
   const handleManualSync = () => {
-    setIsSyncing(true);
     setTimeout(() => {
-      setIsSyncing(false);
       setVitals((v) => ({ ...v, lastSynced: "Just now" }));
       showToast(
         isDoctor
@@ -1015,106 +1071,25 @@ export default function ProfileView() {
     }, 1000);
   };
 
+  const compactNumber = new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  });
+
   const handleSignOut = async () => {
     try {
-      await fetch("/api/auth/session", {
-        method: "DELETE",
-        credentials: "same-origin",
-      });
+      await signOut(auth);
       window.location.assign("/login");
-    } catch {
-      window.location.assign("/");
+    } catch (error) {
+      console.error("Firebase sign-out failed:", error);
+      showToast("We couldn't sign you out. Please try again.");
     }
   };
 
   return (
     <div className="min-h-dvh bg-background font-brand text-foreground antialiased lg:pl-24">
-      {/* Hidden File Input for Device Photo Upload */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        tabIndex={-1}
-        accept="image/png, image/jpeg, image/webp"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
 
-      {/* Top Desktop & Tablet Header */}
-      <header className="sticky top-0 z-30 border-b border-border/50 bg-background/80 shadow-[0_4px_20px_rgba(15,23,42,0.03)] backdrop-blur-md">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-3.5 sm:px-8">
-          {/* Brand & Breadcrumb */}
-          <div className="flex items-center gap-3">
-            <div className="relative flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              {isDoctor ? (
-                <Stethoscope className="size-5" />
-              ) : (
-                <Sparkles className="size-5" />
-              )}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  {isDoctor
-                    ? "Doctor Clinical Profile"
-                    : "Vitals & Health Profile"}
-                </h1>
-                <span className="hidden items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 sm:inline-flex">
-                  <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                  {isDoctor ? "Doctor Portal" : "Live Sync"}
-                </span>
-              </div>
-              <p className="text-xs text-muted">
-                {isDoctor
-                  ? "Medical certificates, clinical licensing, and doctor credentials"
-                  : "Personal medical record, biometric telemetry, and account settings"}
-              </p>
-            </div>
-          </div>
-
-          {/* Quick Header Actions */}
-          <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleShareProfile}
-              className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary shadow-sm transition hover:bg-primary hover:text-white"
-              title="Share Public Profile"
-            >
-              <Share2 className="size-3.5" />
-              <span className="hidden sm:inline">Share Profile</span>
-              <span className="sm:hidden">Share</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleManualSync}
-              disabled={isSyncing}
-              className="hidden items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 py-1.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent sm:inline-flex"
-            >
-              <RefreshCw
-                className={`size-3.5 text-primary ${isSyncing ? "animate-spin" : ""}`}
-              />
-              <span>
-                {isSyncing
-                  ? "Syncing…"
-                  : isDoctor
-                    ? "Refresh Licensure"
-                    : "Sync Vitals"}
-              </span>
-            </button>
-
-            <ThemeToggle showLabel={false} />
-
-            <Link
-              href="/notifications"
-              aria-label="Notifications"
-              className="relative flex size-10 items-center justify-center rounded-full border border-border/70 bg-surface text-foreground shadow-sm transition hover:bg-accent hover:text-primary"
-            >
-              <Bell className="size-4" />
-              <span className="absolute right-2 top-2 size-2 rounded-full bg-primary ring-2 ring-surface" />
-            </Link>
-          </div>
-        </div>
-      </header>
+      <DashboardHeader />
 
       {/* Main Container */}
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 pb-32 pt-6 sm:px-6 lg:pb-16 lg:pt-8">
@@ -1129,34 +1104,33 @@ export default function ProfileView() {
         {/* 2-Column Responsive Layout */}
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           {/* ================= LEFT COLUMN: User Card & Emergency Contact ================= */}
-          <div className="flex flex-col gap-6 lg:col-span-4">
-            {/* Identity Card */}
-            <div className={`overflow-hidden ${GLASS_CARD}`}>
-              {/* Decorative Cover Gradient */}
-              <div
-                className={`relative h-28 w-full bg-gradient-to-r ${
-                  isDoctor
-                    ? "from-blue-600/25 via-primary/25 to-indigo-600/25 dark:from-blue-900/40 dark:via-primary/20 dark:to-indigo-900/40"
-                    : "from-cyan-500/20 via-primary/25 to-blue-600/20 dark:from-cyan-900/30 dark:via-primary/20 dark:to-blue-900/30"
-                }`}
-              >
-                <div className="absolute right-4 top-4">
-                  <span className="rounded-full bg-surface/80 px-2.5 py-1 text-[11px] font-semibold text-primary backdrop-blur-md">
-                    {isDoctor
-                      ? `Doctor ID #${profile.uid ? profile.uid.slice(0, 8).toUpperCase() : "DR-771"}`
-                      : `UID #${profile.uid ? profile.uid.slice(0, 8).toUpperCase() : "VT-USER"}`}
-                  </span>
-                </div>
-              </div>
 
-              {/* Profile Avatar & Info */}
-              <div className="relative flex flex-col items-center px-6 pb-6 pt-0 text-center">
-                {/* Avatar with cyan ring and edit camera badge */}
-                <div className="relative -mt-14 mb-4">
-                  <div className="relative size-24 overflow-hidden rounded-full border-4 border-surface bg-surface shadow-md ring-2 ring-primary/40">
-                    {profile.avatarUrl ? (
+          <div className={`min-w-0 w-full p-5 ${GLASS_CARD} lg:col-span-4`}>
+            {/* Username */}
+            <div className="mb-4 flex items-center gap-1.5">
+              <h2 className="truncate text-lg font-bold tracking-tight text-foreground">
+                {profile.username || profile.name}
+              </h2>
+              {isDoctor && profile.verified && (
+                <span
+                  title="Verified doctor"
+                  aria-label="Verified doctor"
+                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
+                >
+                  ✓
+                </span>
+              )}
+            </div>
+
+            {/* Avatar + stats */}
+            <div className="flex items-center gap-5">
+              <div className="relative shrink-0">
+                {/* Story-style gradient ring */}
+                <div className="rounded-full bg-gradient-to-r from-cyan-500 via-primary to-blue-600 dark:from-cyan-900 dark:via-primary dark:to-blue-900 p-[3px]">
+                  <div className="relative size-20 overflow-hidden rounded-full border-[3px] border-surface bg-surface sm:size-24">
+                    {profile.avatarURL ? (
                       <Image
-                        src={profile.avatarUrl}
+                        src={profile.avatarURL}
                         alt={profile.name}
                         fill
                         sizes="96px"
@@ -1165,230 +1139,180 @@ export default function ProfileView() {
                       />
                     ) : (
                       <div className="flex size-full items-center justify-center bg-primary/20 text-2xl font-bold text-primary">
-                        {profile.name?.[0]?.toUpperCase() || (
-                          <User className="size-8" />
-                        )}
+                        {profile.name?.[0]?.toUpperCase() || <User className="size-8" />}
+                      </div>
+                    )}
+                    {percent && Number(percent) < 100 && (
+                      <div className="absolute inset-0 grid place-items-center rounded-full overflow-hidden">
+                        {/* Water */}
+                        <div
+                          className="absolute bottom-0 left-0 w-full bg-primary/80 transition-all duration-700 ease-in-out"
+                          style={{ height: `${Number(percent)}%` }}
+                        >
+                          {/* Animated waves */}
+                          <div className="absolute -top-2 left-0 w-[200%] h-4 animate-wave">
+                            <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="w-full h-full">
+                              <path
+                                d="M0,60 C150,120 350,0 600,60 C850,120 1050,0 1200,60 L1200,120 L0,120 Z"
+                                fill="currentColor"
+                                className="text-primary"
+                              />
+                            </svg>
+                          </div>
+
+                          <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
+                        </div>
+
+                        {/* Percentage */}
+                        <span className="relative z-10 text-xs font-medium text-primary-foreground drop-shadow">
+                          {Math.round(Number(percent))}%
+                        </span>
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsPhotoModalOpen(true)}
-                    aria-label="Change Photo"
-                    title="Change Photo"
-                    className="absolute bottom-0 right-0 flex size-8 items-center justify-center rounded-full bg-primary text-white shadow-md transition hover:scale-110 active:scale-95"
-                  >
-                    <Camera className="size-4" />
-                  </button>
                 </div>
 
-                {/* Name & Subtitle */}
-                <h2 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                  {isDoctor && !profile.name.toLowerCase().startsWith("dr")
-                    ? `Dr. ${profile.name}`
-                    : profile.name}
-                </h2>
-                {profile.username && (
-                  <p className="text-xs font-semibold text-primary">
-                    @{profile.username}
-                  </p>
-                )}
-                <p className="mt-1 flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
-                  <Calendar className="size-3.5 text-primary" />
-                  Member since {profile.memberSince}
-                </p>
-
-                {/* Tags */}
-                <div className="mt-3.5 flex flex-wrap justify-center gap-1.5">
-                  <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground capitalize">
-                    {isDoctor ? "Licensed Doctor" : profile.type}
-                  </span>
-                  {profile.specialty && isDoctor && (
-                    <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                      {profile.specialty}
-                    </span>
-                  )}
-                  {profile.gender && (
-                    <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground capitalize">
-                      {profile.gender}
-                    </span>
-                  )}
-                  {userAge !== null && (
-                    <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground">
-                      {userAge} yrs
-                    </span>
-                  )}
-                  {isDoctor ? (
-                    profile.verified ? (
-                      <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                        Board Verified ✓
-                      </span>
-                    ) : (
-                      <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
-                        Pending Review
-                      </span>
-                    )
-                  ) : (
-                    <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                      Active
-                    </span>
-                  )}
-                </div>
-
-                {/* Bio (if available) */}
-                {profile.bio && (
-                  <p className="mt-3 max-w-xs text-xs italic text-muted">
-                    &quot;{profile.bio}&quot;
-                  </p>
-                )}
-
-                {/* Contact & Location Details */}
-                <div className="mt-4 flex w-full flex-col gap-2 rounded-xl border border-border/50 bg-background/50 p-3 text-left text-xs text-muted">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 truncate">
-                      <Mail className="size-3.5 shrink-0 text-primary" />
-                      <span className="truncate text-foreground font-medium">
-                        {profile.email || "No email"}
-                      </span>
-                    </div>
-                    <span
-                      title="Email is locked to your account"
-                      className="inline-flex shrink-0 items-center gap-1 rounded bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted"
-                    >
-                      <Lock className="size-2.5" /> Locked
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Phone className="size-3.5 shrink-0 text-primary" />
-                    <span className="text-foreground font-medium">
-                      {profile.phone || "No phone added"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <MapPin className="size-3.5 shrink-0 text-primary" />
-                    <span>{profile.country || "Country not set"}</span>
-                  </div>
-                  {isDoctor && profile.licenseNumber && (
-                    <div className="flex items-center gap-2 border-t border-border/50 pt-1.5 text-foreground font-medium">
-                      <FileCheck className="size-3.5 shrink-0 text-primary" />
-                      <span>Lic: {profile.licenseNumber}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Action buttons */}
-                <div className="mt-4 flex w-full flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTempProfile(profile);
-                      setFormError("");
-                      setIsEditProfileOpen(true);
-                    }}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 py-2.5 text-xs font-bold text-primary transition hover:bg-primary hover:text-white"
-                  >
-                    <Pencil className="size-3.5" />
-                    Edit Profile Info
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleShareProfile}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-surface py-2.5 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent hover:border-primary/40"
-                  >
-                    <Share2 className="size-3.5 text-primary" />
-                    Share Public Profile
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Emergency Contact Card */}
-            <div className={`p-5 ${GLASS_CARD}`}>
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="flex size-7 items-center justify-center rounded-lg bg-rose-500/10 text-rose-500">
-                    <BriefcaseMedical className="size-4" />
-                  </span>
-                  <h3 className="text-base font-bold text-foreground">
-                    {isDoctor
-                      ? "Practice Emergency Contact"
-                      : "Emergency Contact"}
-                  </h3>
-                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setTempEmergency(emergencyContact);
-                    setFormError("");
-                    setIsEditEmergencyOpen(true);
-                  }}
-                  className="text-xs font-bold text-primary hover:underline"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Change Photo"
+                  title="Change Photo"
+                  disabled={Number(percent) != "100" && percent}
+                  className="absolute bottom-0 right-0 flex size-7 items-center justify-center rounded-full border-2 border-surface bg-primary text-primary-foreground shadow-md transition hover:scale-110 active:scale-95"
                 >
-                  {emergencyContact.name ? "Edit" : "+ Add"}
+                  <Camera className="size-3.5" />
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleProfilePhotoChange}
+                />
               </div>
 
-              {/* Emergency Contact Detail Row */}
-              <div className="flex items-center gap-3.5 rounded-xl border border-border/60 bg-background/60 p-3.5">
-                <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-rose-500/15 text-rose-500 shadow-sm">
-                  <BriefcaseMedical className="size-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h4 className="truncate text-sm font-bold text-foreground">
-                    {emergencyContact.name || "No emergency contact set"}
-                  </h4>
-                  <p className="mt-0.5 truncate text-xs text-muted">
-                    {emergencyContact.relationship
-                      ? `${emergencyContact.relationship} • `
-                      : ""}
-                    {emergencyContact.phone || "Click edit to add phone"}
-                  </p>
-                </div>
-              </div>
+              <ul className="flex flex-1 justify-around text-center">
+                {profileStats.map(({ label, value }) => (
 
-              {emergencyContact.notes && (
-                <p className="mt-2.5 text-xs text-muted">
-                  Note: {emergencyContact.notes}
-                </p>
+                  <li key={label}>
+                    <button onClick={() => label === "followers" ? setFollowersDialog(true) : label === "following" ? setFollowingDialog(true) : ""} className="flex flex-col items-center cursor-pointer gap-0.5 rounded-lg px-2 py-1 transition hover:bg-foreground/5">
+                      <span className="text-base font-bold leading-tight text-foreground sm:text-lg">
+                        {compactNumber.format(value)}
+                      </span>
+                      <span className="text-xs text-muted">{label}</span>
+                    </button>
+                  </li>
+                ))}
+
+              </ul>
+            </div>
+            {/* Name, category, bio */}
+            <div className="mt-4 flex flex-col gap-0.5">
+              <p className="text-sm font-bold text-foreground">
+                {isDoctor && !profile.name.toLowerCase().startsWith("dr")
+                  ? `Dr. ${profile.name}`
+                  : profile.name}
+              </p>
+              <p className="text-xs capitalize text-muted">
+                {[isDoctor ? "Licensed Doctor" : profile.type, isDoctor && profile.specialty]
+                  .filter(Boolean)
+                  .join(" • ")}
+              </p>
+              {profile.bio && (
+                <p className="mt-1 text-sm leading-snug text-foreground">{profile.bio}</p>
               )}
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                <Calendar className="size-3.5 text-primary" />
+                Member since {profile.memberSince}
+              </p>
+            </div>
 
-              {emergencyContact.phone && (
-                <div className="mt-3 flex items-center justify-between gap-2">
-                  <a
-                    href={`tel:${emergencyContact.phone.replace(/[^0-9+]/g, "")}`}
-                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface py-2 text-xs font-semibold text-foreground shadow-sm transition hover:bg-accent"
-                  >
-                    <Phone className="size-3.5 text-emerald-500" />
-                    Call Contact
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      showToast("Emergency SOS broadcast prepared.")
-                    }
-                    className="flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-500 hover:text-white dark:text-rose-400"
-                  >
-                    ICE Alert
-                  </button>
-                </div>
+            {/* Status chips */}
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {isDoctor ? (
+                profile.verified ? (
+                  <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                    Board Verified ✓
+                  </span>
+                ) : (
+                  <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+                    Pending Review
+                  </span>
+                )
+              ) : (
+                <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  Active
+                </span>
+              )}
+              {profile.gender && (
+                <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold capitalize text-accent-foreground">
+                  {profile.gender}
+                </span>
+              )}
+              {userAge !== null && (
+                <span className="rounded-md bg-accent/60 px-2 py-0.5 text-xs font-semibold text-accent-foreground">
+                  {userAge} yrs
+                </span>
               )}
             </div>
 
-            {/* Sign Out Card */}
-            <div className={`p-5 ${GLASS_CARD}`}>
+            {/* Action buttons */}
+            <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => setIsSignOutModalOpen(true)}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 py-3 text-sm font-bold text-red-600 transition hover:bg-red-500 hover:text-white dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-600"
+                onClick={() => {
+
+                  setFormError("");
+                  setIsEditProfileOpen(true);
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-foreground/5 py-2 text-sm font-semibold text-foreground transition hover:bg-foreground/10"
               >
-                <LogOut className="size-4" />
-                Sign Out
+                <Pencil className="size-3.5" />
+                Edit profile
               </button>
 
-              <p className="mt-4 text-center text-xs text-muted">
-                App Version 2.4.1 (Build 890)
-              </p>
+              <button
+                type="button"
+                onClick={handleShareProfile}
+                className="flex items-center justify-center gap-1.5 rounded-lg bg-foreground/5 py-2 text-sm font-semibold text-foreground transition hover:bg-foreground/10"
+              >
+                <Share2 className="size-3.5" />
+                Share profile
+              </button>
+            </div>
+
+            {/* Contact & Location Details */}
+            <div className="mt-4 flex w-full flex-col gap-2 rounded-xl border border-border/50 bg-background/50 p-3 text-left text-xs text-muted">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 truncate">
+                  <Mail className="size-3.5 shrink-0 text-primary" />
+                  <span className="truncate font-medium text-foreground">
+                    {profile.email || "No email"}
+                  </span>
+                </div>
+                <span
+                  title="Email is locked to your account"
+                  className="inline-flex shrink-0 items-center gap-1 rounded bg-muted/20 px-1.5 py-0.5 text-[10px] text-muted"
+                >
+                  <Lock className="size-2.5" /> Locked
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Phone className="size-3.5 shrink-0 text-primary" />
+                <span className="font-medium text-foreground">
+                  {profile.phone || "No phone added"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="size-3.5 shrink-0 text-primary" />
+                <span>{profile.country || "Country not set"}</span>
+              </div>
+              {isDoctor && profile.licenseNumber && (
+                <div className="flex items-center gap-2 border-t border-border/50 pt-1.5 font-medium text-foreground">
+                  <FileCheck className="size-3.5 shrink-0 text-primary" />
+                  <span>Lic: {profile.licenseNumber}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1412,13 +1336,12 @@ export default function ProfileView() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
-                        hasDoctorCredentials
-                          ? profile.verified
-                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                            : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                          : "bg-muted/20 text-muted border border-border"
-                      }`}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${hasDoctorCredentials
+                        ? profile.verified
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                          : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                        : "bg-muted/20 text-muted border border-border"
+                        }`}
                     >
                       {hasDoctorCredentials ? (
                         profile.verified ? (
@@ -1500,17 +1423,16 @@ export default function ProfileView() {
                               </div>
                             </div>
                             <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                profile.licenseStatus === "approved" ||
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${profile.licenseStatus === "approved" ||
                                 profile.verified
-                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                  : profile.licenseStatus === "rejected"
-                                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                              }`}
+                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                : profile.licenseStatus === "rejected"
+                                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                  : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                }`}
                             >
                               {profile.licenseStatus === "approved" ||
-                              profile.verified
+                                profile.verified
                                 ? "Approved"
                                 : profile.licenseStatus === "rejected"
                                   ? "Rejected"
@@ -1554,7 +1476,7 @@ export default function ProfileView() {
                           </span>
                           <span className="font-semibold text-primary">
                             {profile.licenseStatus === "approved" ||
-                            profile.verified
+                              profile.verified
                               ? "Verified Record"
                               : "Pending Approval"}
                           </span>
@@ -1563,9 +1485,9 @@ export default function ProfileView() {
 
                       {/* REAL DEGREE CARD (or empty placeholder if not set) */}
                       {profile.degreeTitle ||
-                      profile.degreeIssuer ||
-                      profile.degreeYear ||
-                      profile.degreeDoc ? (
+                        profile.degreeIssuer ||
+                        profile.degreeYear ||
+                        profile.degreeDoc ? (
                         <div
                           className={`flex flex-col justify-between p-5 ${GLASS_CARD}`}
                         >
@@ -1586,17 +1508,16 @@ export default function ProfileView() {
                                 </div>
                               </div>
                               <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                  profile.degreeStatus === "approved" ||
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${profile.degreeStatus === "approved" ||
                                   profile.verified
-                                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                    : profile.degreeStatus === "rejected"
-                                      ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                }`}
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                  : profile.degreeStatus === "rejected"
+                                    ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                                    : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                  }`}
                               >
                                 {profile.degreeStatus === "approved" ||
-                                profile.verified
+                                  profile.verified
                                   ? "Approved"
                                   : profile.degreeStatus === "rejected"
                                     ? "Rejected"
@@ -1638,7 +1559,7 @@ export default function ProfileView() {
                             </span>
                             <span className="font-semibold text-primary">
                               {profile.degreeStatus === "approved" ||
-                              profile.verified
+                                profile.verified
                                 ? "Verified Record"
                                 : "Pending Approval"}
                             </span>
@@ -1791,7 +1712,7 @@ export default function ProfileView() {
                       Health Metrics & Vitals
                     </h3>
                     <p className="text-xs text-muted">
-                      {hasVitals
+                      {vitals.height && vitals.weight && vitals.bloodType
                         ? `Continuous biometric stream • Synced ${vitals.lastSynced || "Today"}`
                         : "Vitals are not configured yet • Showing reference examples below"}
                     </p>
@@ -1799,24 +1720,17 @@ export default function ProfileView() {
                   <button
                     type="button"
                     onClick={() => {
-                      setTempVitals({
-                        height: vitals.height || 172,
-                        weight: vitals.weight || 64.5,
-                        bloodType: vitals.bloodType || "A+",
-                        bloodRh: vitals.bloodRh || "POS",
-                      });
-                      setFormError("");
                       setIsEditVitalsOpen(true);
                     }}
                     className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
                   >
                     <Pencil className="size-3" />
-                    {hasVitals ? "Update Vitals" : "Enter Your Vitals"}
+                    {vitals.height && vitals.weight && vitals.bloodType ? "Update Vitals" : "Enter Your Vitals"}
                   </button>
                 </div>
 
                 {/* Banner when vitals are not set yet */}
-                {!hasVitals && (
+                {!vitals.height && !vitals.weight && !vitals.bloodType && (
                   <div className="flex items-center gap-2.5 rounded-xl border border-primary/30 bg-primary/10 p-3 text-xs text-foreground">
                     <AlertCircle className="size-4 shrink-0 text-primary" />
                     <span>
@@ -1844,7 +1758,7 @@ export default function ProfileView() {
                     </div>
 
                     <div className="mt-4 flex items-baseline gap-1.5">
-                      {hasVitals ? (
+                      {vitals.height ? (
                         <>
                           <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
                             {vitals.height}
@@ -1867,10 +1781,10 @@ export default function ProfileView() {
 
                     <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
                       <span>
-                        {hasVitals ? `${feet}' ${inches}"` : "Not set yet"}
+                        {vitals ? `${feet}' ${inches}"` : "Not set yet"}
                       </span>
                       <span className="text-teal-600 dark:text-teal-400 font-medium">
-                        {hasVitals ? "Adult Standard" : "Click to enter"}
+                        {vitals ? "Adult Standard" : "Click to enter"}
                       </span>
                     </div>
                   </div>
@@ -1889,7 +1803,7 @@ export default function ProfileView() {
                     </div>
 
                     <div className="mt-4 flex items-baseline gap-1.5">
-                      {hasVitals ? (
+                      {vitals.weight ? (
                         <>
                           <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
                             {vitals.weight}
@@ -1912,9 +1826,9 @@ export default function ProfileView() {
 
                     <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
                       <span>
-                        {hasVitals ? `${weightLbs} lbs` : "Not set yet"}
+                        {vitals.weight && vitals.height ? `${weightLbs} lbs` : "Not set yet"}
                       </span>
-                      {hasVitals ? (
+                      {vitals.weight && vitals.height ? (
                         <span className={`font-semibold ${bmiStatus.color}`}>
                           BMI {bmi}
                         </span>
@@ -1940,7 +1854,7 @@ export default function ProfileView() {
                     </div>
 
                     <div className="mt-4 flex items-baseline gap-2">
-                      {hasVitals ? (
+                      {vitals.bloodType ? (
                         <>
                           <span className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
                             {vitals.bloodType}
@@ -1963,12 +1877,12 @@ export default function ProfileView() {
 
                     <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted">
                       <span>
-                        {hasVitals
+                        {vitals
                           ? `Rh ${vitals.bloodRh === "POS" ? "Positive" : "Negative"}`
                           : "Not set yet"}
                       </span>
                       <span className="font-medium text-foreground">
-                        {hasVitals ? "Donor Match" : "Click to select"}
+                        {vitals ? "Donor Match" : "Click to select"}
                       </span>
                     </div>
                   </div>
@@ -1993,8 +1907,7 @@ export default function ProfileView() {
                   <button
                     type="button"
                     onClick={() => {
-                      setFamilyUsername("");
-                      setFamilyType("parent");
+                      setFamilyType([]);
                       setFamilyError("");
                       setIsAddFamilyOpen(true);
                     }}
@@ -2006,9 +1919,9 @@ export default function ProfileView() {
                 </div>
 
                 {/* Family Members Grid / Empty State */}
-                {profile.family && Object.keys(profile.family).length > 0 ? (
+                {familyArr && Object.keys(familyArr).length > 0 ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {Object.values(profile.family).map((member) => {
+                    {Object.values(familyArr).map((member) => {
                       const relMeta = RELATIONSHIP_LABELS[member.type] || {
                         label: member.type || "Family",
                         color: "bg-primary/10 text-primary border-primary/20",
@@ -2083,8 +1996,7 @@ export default function ProfileView() {
                     <button
                       type="button"
                       onClick={() => {
-                        setFamilyUsername("");
-                        setFamilyType("parent");
+                        setFamilyType([]);
                         setFamilyError("");
                         setIsAddFamilyOpen(true);
                       }}
@@ -2258,271 +2170,30 @@ export default function ProfileView() {
         </div>
       </main>
 
-      {/* ================= PHOTO MANAGEMENT MODAL ================= */}
-      {isPhotoModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="photo-modal-title"
-            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h3
-                id="photo-modal-title"
-                className="text-lg font-bold text-foreground"
-              >
-                Profile Photo
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsPhotoModalOpen(false)}
-                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            <div className="mt-5 flex flex-col items-center">
-              <div className="relative size-24 overflow-hidden rounded-full border-4 border-surface shadow-lg ring-2 ring-primary/40">
-                {profile.avatarUrl ? (
-                  <Image
-                    src={profile.avatarUrl}
-                    alt={profile.name}
-                    fill
-                    sizes="96px"
-                    unoptimized
-                    className="object-cover"
-                  />
-                ) : (
-                  <div className="flex size-full items-center justify-center bg-primary/20 text-2xl font-bold text-primary">
-                    {profile.name?.[0]?.toUpperCase() || (
-                      <User className="size-8" />
-                    )}
-                  </div>
-                )}
-              </div>
-              <p className="mt-2 text-xs text-muted">
-                Formats: PNG, JPG, or WEBP (Max 5MB)
-              </p>
-            </div>
-
-            <div className="mt-6 flex flex-col gap-2.5">
-              {/* Upload from Computer */}
-              <button
-                type="button"
-                disabled={photoActionLoading}
-                onClick={() => fileInputRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-xs font-bold text-white shadow-md transition hover:opacity-90 disabled:opacity-50"
-              >
-                <Upload className="size-4" />
-                {photoActionLoading ? "Processing…" : "Upload from Device"}
-              </button>
-
-              {/* Remove Photo */}
-              {profile.avatarUrl && (
-                <button
-                  type="button"
-                  disabled={photoActionLoading}
-                  onClick={handleRemovePhoto}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-500/20 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
-                >
-                  <Trash2 className="size-3.5" />
-                  Remove Current Photo
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ================= EDIT VITALS MODAL ================= */}
       {isEditVitalsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsEditVitalsOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="edit-vitals-title"
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h3
-                id="edit-vitals-title"
-                className="text-lg font-bold text-foreground"
-              >
-                Update Vitals & Body Metrics
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsEditVitalsOpen(false)}
-                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-
-            {formError && (
-              <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-medium text-red-600 dark:text-red-400">
-                <AlertCircle className="size-4 shrink-0" />
-                <span>{formError}</span>
-              </div>
-            )}
-
-            <form
-              onSubmit={handleSaveVitals}
-              className="mt-4 flex flex-col gap-4"
-            >
-              {/* Height */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="height-input"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Height (cm)
-                </label>
-                <input
-                  id="height-input"
-                  type="number"
-                  min="50"
-                  max="250"
-                  placeholder="e.g. 172"
-                  value={tempVitals.height}
-                  onChange={(e) =>
-                    setTempVitals({
-                      ...tempVitals,
-                      height: Number(e.target.value),
-                    })
-                  }
-                  required
-                  className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-
-              {/* Weight */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="weight-input"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Weight (kg)
-                </label>
-                <input
-                  id="weight-input"
-                  type="number"
-                  step="0.1"
-                  min="20"
-                  max="300"
-                  placeholder="e.g. 64.5"
-                  value={tempVitals.weight}
-                  onChange={(e) =>
-                    setTempVitals({
-                      ...tempVitals,
-                      weight: Number(e.target.value),
-                    })
-                  }
-                  required
-                  className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-
-              {/* Blood Type & Rh */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="blood-type-select"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Blood Type
-                  </label>
-                  <select
-                    id="blood-type-select"
-                    value={tempVitals.bloodType}
-                    onChange={(e) =>
-                      setTempVitals({
-                        ...tempVitals,
-                        bloodType: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  >
-                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(
-                      (type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="rh-factor-select"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Rh Factor
-                  </label>
-                  <select
-                    id="rh-factor-select"
-                    value={tempVitals.bloodRh}
-                    onChange={(e) =>
-                      setTempVitals({
-                        ...tempVitals,
-                        bloodRh: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  >
-                    <option value="POS">Positive (Rh+)</option>
-                    <option value="NEG">Negative (Rh-)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Live BMI preview */}
-              <div className="rounded-xl border border-border/70 bg-accent/30 p-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-foreground">
-                    Projected BMI:
-                  </span>
-                  <span className="font-bold text-primary">
-                    {(
-                      tempVitals.weight /
-                      ((tempVitals.height / 100) * (tempVitals.height / 100))
-                    ).toFixed(1)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditVitalsOpen(false)}
-                  className="rounded-xl border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingVitals}
-                  className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {savingVitals ? "Saving to RTDB…" : "Save Changes"}
-                </button>
-              </div>
-            </form>
+            <EditVitals setIsEditVitalsOpen={setIsEditVitalsOpen} />
           </div>
         </div>
       )}
 
       {/* ================= EDIT EMERGENCY CONTACT MODAL ================= */}
       {isEditEmergencyOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsEditEmergencyOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="edit-emergency-title"
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h3
@@ -2665,404 +2336,164 @@ export default function ProfileView() {
 
       {/* ================= EDIT PROFILE INFO MODAL ================= */}
       {isEditProfileOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsEditProfileOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
             className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <div>
-                <h3
-                  id="edit-profile-title"
-                  className="text-lg font-bold text-foreground"
-                >
-                  Edit Profile Information
-                </h3>
-                <p className="text-xs text-muted">
-                  Update your identity details saved in Firebase RTDB
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsEditProfileOpen(false)}
-                className="rounded-lg p-1 text-muted hover:bg-accent hover:text-foreground"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
+            <EditProfileForm setIsEditProfileOpen={setIsEditProfileOpen} isEditProfileOpen={isEditProfileOpen} />
 
-            {formError && (
-              <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-xs font-medium text-red-600 dark:text-red-400">
-                <AlertCircle className="size-4 shrink-0" />
-                <span>{formError}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ================= EDIT PROFILE INFO MODAL ================= */}
+      {followingDialog && (
+        <div onClick={() => setFollowingDialog(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="followers-title"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+          >
+            <h2 id="followers-title">
+              Following
+            </h2>
+
+            {followersLoading ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Loading...
+              </p>
+            ) : followersData.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No following yet.
+              </p>
+            ) : (
+              <div className="divide-y divide-border">
+                {followersData.map((person) => (
+                  <div
+                    key={person.uid}
+                    className="flex items-center gap-3 py-4"
+                  >
+                    {/* Profile Image */}
+                    <img
+                      src={person.photoURL || "/default-avatar.png"}
+                      alt={person.name || "User"}
+                      className="h-12 w-12 shrink-0 rounded-full object-cover"
+                    />
+
+                    {/* User Info */}
+                    <div className="min-w-0 flex-1">
+                      {/* Name + Username */}
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-semibold text-foreground">
+                          {person.name || "Unknown User"}
+                        </p>
+
+                        {person.username && (
+                          <span className="truncate text-sm text-muted-foreground">
+                            @{person.username}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Email */}
+                      {person.email && (
+                        <p className="truncate text-sm text-muted-foreground">
+                          {person.email}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
 
-            <form
-              onSubmit={handleSaveProfile}
-              className="mt-4 flex flex-col gap-4"
-            >
-              {/* Full Name */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="profile-name"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Full Name (2–50 characters)
-                </label>
-                <input
-                  id="profile-name"
-                  type="text"
-                  minLength={2}
-                  maxLength={50}
-                  value={tempProfile.name}
-                  onChange={(e) =>
-                    setTempProfile({ ...tempProfile, name: e.target.value })
-                  }
-                  required
-                  className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                />
-              </div>
+      {/* ================= EDIT PROFILE INFO MODAL ================= */}
+      {followersDialog && (
+        <div
+          onClick={() => setFollowersDialog(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="followers-title"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+          >
+            <h2 id="followers-title">
+              Followers
+            </h2>
 
-              {/* Username */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="profile-username"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Username (unique, lowercase, letters/numbers/_)
-                </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3.5 text-sm text-muted">
-                    @
-                  </span>
-                  <input
-                    id="profile-username"
-                    type="text"
-                    value={tempProfile.username}
-                    onChange={(e) =>
-                      setTempProfile({
-                        ...tempProfile,
-                        username: e.target.value
-                          .toLowerCase()
-                          .replace(/[^a-z0-9_]/g, ""),
-                      })
-                    }
-                    placeholder="username"
-                    className="w-full rounded-xl border border-border bg-background pl-8 pr-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Account Role / Type */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="profile-type"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Account Role
-                </label>
-                <select
-                  id="profile-type"
-                  value={tempProfile.type}
-                  onChange={(e) =>
-                    setTempProfile({
-                      ...tempProfile,
-                      type: e.target.value,
-                    })
-                  }
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary capitalize"
-                >
-                  <option value="user">Patient / User</option>
-                  <option value="doctor">Medical Doctor</option>
-                </select>
-              </div>
-
-              {/* Email (Read-only as per instructions "except for email") */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="profile-email-readonly"
-                    className="text-xs font-semibold text-muted uppercase"
+            {followersLoading ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Loading...
+              </p>
+            ) : followersData.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No followers yet.
+              </p>
+            ) : (
+              <div className="divide-y divide-border">
+                {followersData.map((person) => (
+                  <div
+                    key={person.uid}
+                    className="flex items-center gap-3 py-4"
                   >
-                    Email Address
-                  </label>
-                  <span className="flex items-center gap-1 text-[11px] font-medium text-muted">
-                    <Lock className="size-3" /> Cannot be changed
-                  </span>
-                </div>
-                <input
-                  id="profile-email-readonly"
-                  type="email"
-                  value={profile.email}
-                  disabled
-                  readOnly
-                  className="w-full cursor-not-allowed rounded-xl border border-border/60 bg-muted/10 px-4 py-2.5 text-sm text-muted outline-none select-none"
-                />
-              </div>
+                    {/* Profile Image */}
+                    <img
+                      src={person.photoURL || "/default-avatar.png"}
+                      alt={person.name || "User"}
+                      className="h-12 w-12 shrink-0 rounded-full object-cover"
+                    />
 
-              {/* Phone & Country Grid */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="profile-phone"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Phone Number
-                  </label>
-                  <input
-                    id="profile-phone"
-                    type="tel"
-                    value={tempProfile.phone}
-                    onChange={(e) =>
-                      setTempProfile({ ...tempProfile, phone: e.target.value })
-                    }
-                    placeholder="+1 (555) 000-0000"
-                    className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  />
-                </div>
+                    {/* User Info */}
+                    <div className="min-w-0 flex-1">
+                      {/* Name + Username */}
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-semibold text-foreground">
+                          {person.name || "Unknown User"}
+                        </p>
 
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="profile-country"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Country / Location
-                  </label>
-                  <input
-                    id="profile-country"
-                    type="text"
-                    maxLength={150}
-                    value={tempProfile.country}
-                    onChange={(e) =>
-                      setTempProfile({
-                        ...tempProfile,
-                        country: e.target.value,
-                      })
-                    }
-                    placeholder="e.g. United States"
-                    className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  />
-                </div>
-              </div>
+                        {person.username && (
+                          <span className="truncate text-sm text-muted-foreground">
+                            @{person.username}
+                          </span>
+                        )}
+                      </div>
 
-              {/* Gender & Birthday Grid */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="profile-gender"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Gender
-                  </label>
-                  <select
-                    id="profile-gender"
-                    value={tempProfile.gender}
-                    onChange={(e) =>
-                      setTempProfile({
-                        ...tempProfile,
-                        gender: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  >
-                    <option value="">Select Gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="profile-birthday"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Birthday
-                  </label>
-                  <input
-                    id="profile-birthday"
-                    type="date"
-                    value={tempProfile.birthday}
-                    onChange={(e) =>
-                      setTempProfile({
-                        ...tempProfile,
-                        birthday: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Bio (string up to 150 chars per schema) */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="profile-bio"
-                    className="text-xs font-semibold text-muted uppercase"
-                  >
-                    Bio
-                  </label>
-                  <span className="text-[11px] text-muted">
-                    {tempProfile.bio?.length || 0}/150
-                  </span>
-                </div>
-                <textarea
-                  id="profile-bio"
-                  maxLength={150}
-                  rows={2}
-                  value={tempProfile.bio}
-                  onChange={(e) =>
-                    setTempProfile({ ...tempProfile, bio: e.target.value })
-                  }
-                  placeholder="Short health summary or personal note…"
-                  className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary resize-none"
-                />
-              </div>
-
-              {/* Family Relationships Section (RTDB reciprocal links) */}
-              <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-background/50 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="size-4 text-primary" />
-                    <span className="text-xs font-bold text-foreground uppercase tracking-wider">
-                      Family Relationships
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-muted font-medium">
-                    {profile.family ? Object.keys(profile.family).length : 0}{" "}
-                    Linked
-                  </span>
-                </div>
-
-                {/* Current Family Members List */}
-                {profile.family && Object.keys(profile.family).length > 0 && (
-                  <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pr-1">
-                    {Object.values(profile.family).map((member) => {
-                      const relMeta = RELATIONSHIP_LABELS[member.type] || {
-                        label: member.type || "Family",
-                        color: "bg-primary/10 text-primary border-primary/20",
-                      };
-                      return (
-                        <div
-                          key={member.id || member.username}
-                          className="flex items-center justify-between rounded-lg border border-border bg-surface p-2.5 text-xs"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="font-semibold text-foreground truncate max-w-[130px]">
-                              {member.name}
-                            </span>
-                            <span className="text-muted font-mono text-[11px]">
-                              @{member.username}
-                            </span>
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold border capitalize ${relMeta.color}`}
-                            >
-                              {relMeta.label}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={removingFamilyId === member.id}
-                            onClick={() => handleRemoveFamilyMember(member.id)}
-                            className="text-muted hover:text-rose-500 p-1 transition disabled:opacity-50"
-                            title="Remove family member"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Add Family Member Form */}
-                <div className="flex flex-col gap-2 pt-2 border-t border-border/60">
-                  <span className="text-[11px] font-semibold text-muted">
-                    Link Family Member by Username
-                  </span>
-                  {familyError && (
-                    <p className="text-xs text-rose-500 font-medium">
-                      {familyError}
-                    </p>
-                  )}
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div className="sm:col-span-2 relative flex items-center">
-                      <span className="absolute left-3 text-xs text-muted font-semibold">
-                        @
-                      </span>
-                      <input
-                        type="text"
-                        value={familyUsername}
-                        onChange={(e) =>
-                          setFamilyUsername(
-                            e.target.value
-                              .toLowerCase()
-                              .replace(/[^a-z0-9_]/g, ""),
-                          )
-                        }
-                        placeholder="username"
-                        className="w-full rounded-xl border border-border bg-surface pl-7 pr-3 py-2 text-xs text-foreground outline-none transition focus:border-primary"
-                      />
+                      {/* Email */}
+                      {person.email && (
+                        <p className="truncate text-sm text-muted-foreground">
+                          {person.email}
+                        </p>
+                      )}
                     </div>
-                    <select
-                      value={familyType}
-                      onChange={(e) => setFamilyType(e.target.value)}
-                      className="w-full rounded-xl border border-border bg-surface px-3 py-2 text-xs text-foreground outline-none transition focus:border-primary capitalize"
-                    >
-                      <option value="parent">Parent</option>
-                      <option value="child">Child</option>
-                      <option value="sibling">Sibling</option>
-                      <option value="spouse">Spouse</option>
-                      <option value="grandparent">Grandparent</option>
-                      <option value="grandchild">Grandchild</option>
-                    </select>
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      disabled={addingFamily || !familyUsername.trim()}
-                      onClick={handleAddFamilyMember}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white disabled:opacity-50"
-                    >
-                      <UserPlus className="size-3.5" />
-                      {addingFamily ? "Linking…" : "Link Member"}
-                    </button>
-                  </div>
-                </div>
+                ))}
               </div>
-
-              <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditProfileOpen(false)}
-                  className="rounded-xl border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingProfile}
-                  className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {savingProfile ? "Saving to RTDB…" : "Save Profile"}
-                </button>
-              </div>
-            </form>
+            )}
           </div>
         </div>
       )}
 
       {/* ================= ADD FAMILY MEMBER MODAL ================= */}
       {isAddFamilyOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsAddFamilyOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="add-family-title"
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
@@ -3112,47 +2543,121 @@ export default function ProfileView() {
                   <span className="absolute left-3.5 text-sm text-muted font-semibold">
                     @
                   </span>
-                  <input
-                    id="family-username-modal"
-                    type="text"
-                    required
-                    value={familyUsername}
-                    onChange={(e) =>
-                      setFamilyUsername(
-                        e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""),
-                      )
-                    }
-                    placeholder="username"
-                    className="w-full rounded-xl border border-border bg-background pl-8 pr-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary"
-                  />
+                  <UserSearchBox onSelect={(user) => setSelected([...selected, { user }])} />
+
+
                 </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selected.length > 0 && (
+                    <div className="w-full mt-3 flex flex-col gap-2">
+                      {selected.map((item) => {
+                        const relation =
+                          familyType.find((relation) => relation.uid === item.user.uid)?.type || "";
+                        console.log(familyType);
+
+                        return (
+                          <div
+                            key={item.user.uid}
+                            className="flex w-full items-center gap-3 rounded-xl border border-border bg-primary/5 p-3"
+                          >
+                            {/* Avatar */}
+                            {item.user.photoURL ? (
+                              <Image
+                                src={item.user.photoURL}
+                                alt={item.user.name || "User"}
+                                width={40}
+                                height={40}
+                                className="size-10 shrink-0 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="grid size-10 shrink-0 place-items-center rounded-full bg-primary/20 text-sm font-bold text-primary">
+                                {item.user.name?.[0]?.toUpperCase() || "V"}
+                              </div>
+                            )}
+
+                            {/* User Info */}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-foreground">
+                                {item.user.name || "Unknown User"}
+                              </p>
+
+                              {item.user.username && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  @{item.user.username}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Relationship */}
+                            <div className="relative w-full sm:w-44">
+                              <select
+                                value={relation}
+                                onChange={(e) => {
+                                  const type = e.target.value;
+
+                                  setFamilyType((previous) => {
+                                    const exists = previous.some(
+                                      (relation) => relation.uid === item.user.uid
+                                    );
+
+                                    if (exists) {
+                                      return previous.map((relation) =>
+                                        relation.uid === item.user.uid
+                                          ? { ...relation, type }
+                                          : relation
+                                      );
+                                    }
+
+                                    return [...previous, { uid: item.user.uid, type }];
+                                  });
+                                }}
+                                className="h-10 w-full appearance-none rounded-xl border border-border bg-background px-3 pr-10 text-sm font-medium text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
+                              >
+                                <option value="">Relationship *</option>
+                                <option value="parent">Parent</option>
+                                <option value="child">Child</option>
+                                <option value="sibling">Sibling</option>
+                                <option value="spouse">Spouse</option>
+                                <option value="grandparent">Grandparent</option>
+                                <option value="grandchild">Grandchild</option>
+                              </select>
+
+                              <ChevronDown
+                                className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                              />
+                            </div>
+
+                            {/* Remove */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelected((previous) =>
+                                  previous.filter((selectedItem) =>
+                                    selectedItem.user.uid !== item.user.uid
+                                  )
+                                );
+
+                                setFamilyType((previous) =>
+                                  previous.filter(
+                                    (relation) => relation.uid !== item.user.uid
+                                  )
+                                );
+                              }}
+                              className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition hover:bg-red-500/10 hover:text-red-500"
+                              aria-label={`Remove ${item.user.name || "user"}`}
+                            >
+                              <X className="size-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="family-relation-modal"
-                  className="text-xs font-semibold text-muted uppercase"
-                >
-                  Relationship to You *
-                </label>
-                <select
-                  id="family-relation-modal"
-                  value={familyType}
-                  onChange={(e) => setFamilyType(e.target.value)}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-primary capitalize"
-                >
-                  <option value="parent">Parent (They see you as Child)</option>
-                  <option value="child">Child (They see you as Parent)</option>
-                  <option value="sibling">Sibling (Reciprocal)</option>
-                  <option value="spouse">Spouse (Reciprocal)</option>
-                  <option value="grandparent">
-                    Grandparent (They see you as Grandchild)
-                  </option>
-                  <option value="grandchild">
-                    Grandchild (They see you as Grandparent)
-                  </option>
-                </select>
-              </div>
+
 
               <div className="mt-2 flex justify-end gap-2.5 border-t border-border/60 pt-4">
                 <button
@@ -3164,8 +2669,8 @@ export default function ProfileView() {
                 </button>
                 <button
                   type="submit"
-                  disabled={addingFamily || !familyUsername.trim()}
-                  className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                  disabled={!selected.length > 0}
+                  className="rounded-xl cursor-pointer bg-primary px-5 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:opacity-50"
                 >
                   {addingFamily ? "Linking…" : "Link Member"}
                 </button>
@@ -3177,12 +2682,13 @@ export default function ProfileView() {
 
       {/* ================= SHARE PROFILE MODAL ================= */}
       {isShareModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsShareModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="share-modal-title"
-            className="w-full max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
@@ -3274,7 +2780,7 @@ export default function ProfileView() {
                           text: `View ${profile.name}'s verified profile on Vitality Health:`,
                           url: fullUrl,
                         })
-                        .catch(() => {});
+                        .catch(() => { });
                     }}
                     className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-xs font-bold text-primary transition hover:bg-primary hover:text-white sm:w-auto"
                   >
@@ -3290,12 +2796,13 @@ export default function ProfileView() {
 
       {/* ================= EDIT CREDENTIALS MODAL (DOCTOR ONLY) ================= */}
       {isEditCredentialsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsEditCredentialsOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="cred-modal-title"
-            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <div className="flex items-center gap-2">
@@ -3559,11 +3066,13 @@ export default function ProfileView() {
 
       {/* ================= SIGN OUT CONFIRMATION MODAL ================= */}
       {isSignOutModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div onClick={() => setIsSignOutModalOpen(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div
-            role="alertdialog"
-            aria-labelledby="signout-title"
-            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-6 text-center shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-profile-title"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-border bg-surface p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
           >
             <div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-red-500/10 text-red-500">
               <LogOut className="size-6" />
@@ -3602,6 +3111,6 @@ export default function ProfileView() {
 
       {/* Navigation (Left Sidebar on Desktop, Bottom Pill on Mobile) */}
       <BottomNav />
-    </div>
+    </div >
   );
 }

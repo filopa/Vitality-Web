@@ -1,13 +1,7 @@
 import {
-  Award,
   Calendar,
   Clock,
-  Droplet,
-  FileCheck,
-  Heart,
   MapPin,
-  Ruler,
-  Scale,
   ShieldCheck,
   Sparkles,
   Stethoscope,
@@ -20,7 +14,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import JsonLd from "@/app/_components/seo/JsonLd";
 import ThemeToggle from "@/app/theme-toggle";
-import { getUserByIdOrUsername } from "@/lib/server/users";
+import { getPublicProfileByIdOrUsername } from "@/lib/server/public-profiles";
 import FollowActions from "./_components/FollowActions";
 
 export const instant = false;
@@ -28,7 +22,7 @@ export const instant = false;
 export async function generateMetadata({ params }) {
   await connection();
   const { id } = await params;
-  const user = await getUserByIdOrUsername(id);
+  const user = await getPublicProfileByIdOrUsername(id);
 
   if (!user) {
     return {
@@ -38,7 +32,7 @@ export async function generateMetadata({ params }) {
     };
   }
 
-  const isDoctor = user.type === "doctor";
+  const isDoctor = user.type === "doctor" && user.verified === true;
   const name =
     isDoctor && !user.name.toLowerCase().startsWith("dr")
       ? `Dr. ${user.name}`
@@ -49,10 +43,10 @@ export async function generateMetadata({ params }) {
   const description =
     user.bio ||
     (isDoctor
-      ? `${name} is a licensed medical practitioner specializing in ${user.specialty || "general healthcare"} on the Vitality Network.`
-      : `View ${name}'s verified health profile and vitals on Vitality.`);
+      ? `${name} is a verified medical practitioner specializing in ${user.specialty || "healthcare"} on the Vitality Network.`
+      : `View ${name}'s public profile on Vitality.`);
   const photo =
-    user.urlProfile || user.photoURL || user.avatarURL || user.urlAvatar;
+    user.avatarURL;
 
   return {
     title: { absolute: title },
@@ -83,20 +77,19 @@ export async function generateMetadata({ params }) {
 export default async function PublicProfilePage({ params }) {
   await connection();
   const { id } = await params;
-  const user = await getUserByIdOrUsername(id);
+  const user = await getPublicProfileByIdOrUsername(id);
 
   if (!user) {
     notFound();
   }
 
-  const isDoctor = user.type === "doctor";
+  const isDoctor = user.type === "doctor" && user.verified === true;
   const name =
     isDoctor && !user.name.toLowerCase().startsWith("dr")
       ? `Dr. ${user.name}`
       : user.name;
 
-  const photo =
-    user.urlProfile || user.photoURL || user.avatarURL || user.urlAvatar;
+  const photo = user.avatarURL;
 
   const memberSince = user.createdAt
     ? new Date(user.createdAt).toLocaleDateString("en-US", {
@@ -128,14 +121,6 @@ export default async function PublicProfilePage({ params }) {
         description: user.bio || "Member of Vitality Health",
         image: photo || undefined,
       };
-
-  const hasVitals = Boolean(
-    user.vitals && (user.vitals.height || user.vitals.weight),
-  );
-  const vitalsHeight = user.vitals?.height || 172;
-  const vitalsWeight = user.vitals?.weight || 64.5;
-  const vitalsBlood = user.vitals?.bloodType || "A+";
-  const vitalsRh = user.vitals?.bloodRh || "POS";
 
   return (
     <div className="min-h-dvh bg-background font-brand text-foreground antialiased">
@@ -256,12 +241,6 @@ export default async function PublicProfilePage({ params }) {
                     Specialty: {user.specialty}
                   </span>
                 )}
-                {isDoctor && user.licenseNumber && (
-                  <span className="flex items-center gap-1">
-                    <FileCheck className="size-3.5 text-primary" />
-                    License #{user.licenseNumber}
-                  </span>
-                )}
                 {user.country && (
                   <span className="flex items-center gap-1">
                     <MapPin className="size-3.5 text-primary" />
@@ -298,216 +277,6 @@ export default async function PublicProfilePage({ params }) {
             </div>
           </div>
         </div>
-
-        {/* Dynamic Section: Doctor Credentials vs Patient Vitals */}
-        {isDoctor ? (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                  <Award className="size-5 text-primary" />
-                  Medical Certificates & Qualifications
-                </h2>
-                <p className="text-xs text-muted">
-                  Official clinical credentials registered in the Vitality
-                  Database
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {user.certificates && user.certificates.length > 0 ? (
-                user.certificates.map((cert) => {
-                  const isApproved =
-                    cert.verificationStatus === "approved" || cert.isVerified;
-                  const isPending =
-                    cert.verificationStatus === "padding" ||
-                    cert.verificationStatus === "pending" ||
-                    !cert.verificationStatus;
-
-                  return (
-                    <div
-                      key={cert.certId || cert.title}
-                      className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-3">
-                          <div className="grid size-11 place-items-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-                            <FileCheck className="size-6" />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-bold text-foreground">
-                              {cert.title}
-                            </h3>
-                            <p className="text-xs text-muted">
-                              {cert.issuer || "Accredited Medical Board"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <span
-                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                            isApproved
-                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                              : isPending
-                                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                                : "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                          }`}
-                        >
-                          {isApproved
-                            ? "Approved"
-                            : isPending
-                              ? "Under Review"
-                              : "Rejected"}
-                        </span>
-                      </div>
-
-                      <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3 text-xs text-muted">
-                        <span>Issued: {cert.issueYear || "N/A"}</span>
-                        <span className="font-semibold text-primary">
-                          Verified Document
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <>
-                  <div className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        <div className="grid size-11 place-items-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                          <Award className="size-6" />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">
-                            Medical Practice License
-                          </h3>
-                          <p className="text-xs text-muted">
-                            State Medical Licensing Board
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                        Active
-                      </span>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3 text-xs text-muted">
-                      <span>License #{user.licenseNumber || "MD-984201"}</span>
-                      <span className="font-semibold text-emerald-500">
-                        Authenticated
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        <div className="grid size-11 place-items-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                          <FileCheck className="size-6" />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-foreground">
-                            Doctor of Medicine (M.D.)
-                          </h3>
-                          <p className="text-xs text-muted">
-                            Accredited Medical University
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                        Verified
-                      </span>
-                    </div>
-                    <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3 text-xs text-muted">
-                      <span>Postgraduate Degree</span>
-                      <span className="font-semibold text-emerald-500">
-                        Board Certified
-                      </span>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                  <Heart className="size-5 text-primary" />
-                  Health Vitals & Biometrics
-                </h2>
-                <p className="text-xs text-muted">
-                  {hasVitals
-                    ? "Verified biometric measurements registered on Vitality"
-                    : "Patient vitals profile"}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                    HEIGHT
-                  </span>
-                  <div className="grid size-8 place-items-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                    <Ruler className="size-4" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline gap-1.5">
-                  <span className="text-3xl font-extrabold tracking-tight text-foreground">
-                    {hasVitals ? vitalsHeight : "—"}
-                  </span>
-                  <span className="text-sm font-semibold text-muted">
-                    {hasVitals ? "cm" : "Not specified"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                    WEIGHT
-                  </span>
-                  <div className="grid size-8 place-items-center rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                    <Scale className="size-4" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline gap-1.5">
-                  <span className="text-3xl font-extrabold tracking-tight text-foreground">
-                    {hasVitals ? vitalsWeight : "—"}
-                  </span>
-                  <span className="text-sm font-semibold text-muted">
-                    {hasVitals ? "kg" : "Not specified"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border/70 bg-surface p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold tracking-wider text-muted uppercase">
-                    BLOOD TYPE
-                  </span>
-                  <div className="grid size-8 place-items-center rounded-lg bg-rose-500/10 text-rose-500">
-                    <Droplet className="size-4 fill-rose-500 text-rose-500" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold tracking-tight text-foreground">
-                    {hasVitals ? vitalsBlood : "—"}
-                  </span>
-                  {hasVitals && (
-                    <span className="text-xs font-bold uppercase tracking-wider text-rose-500">
-                      {vitalsRh}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Family Network Section (if public members exist) */}
         {user.family && Object.keys(user.family).length > 0 && (

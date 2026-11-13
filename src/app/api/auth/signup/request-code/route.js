@@ -1,4 +1,4 @@
-import { adminAuth } from "@/lib/firebase-admin";
+import { adminAuth, adminRTDB } from "@/lib/firebase-admin";
 import { sendSignupVerificationCode } from "@/lib/server/signup-verification";
 import { isValidEmail } from "@/lib/validations";
 
@@ -22,18 +22,28 @@ export async function POST(request) {
   }
 
   try {
+    let existingUser;
     try {
-      await adminAuth.getUserByEmail(email);
-      return Response.json(
-        {
-          success: false,
-          code: "EMAIL_EXISTS",
-          message: "This email is already registered.",
-        },
-        { status: 409 },
-      );
+      existingUser = await adminAuth.getUserByEmail(email);
     } catch (error) {
       if (error.code !== "auth/user-not-found") throw error;
+    }
+
+    if (existingUser) {
+      const profile = await adminRTDB.ref(`users/${existingUser.uid}`).get();
+      const hasPasswordProvider = existingUser.providerData.some(
+        (provider) => provider.providerId === "password",
+      );
+      if (!hasPasswordProvider || profile.exists()) {
+        return Response.json(
+          {
+            success: false,
+            code: "EMAIL_EXISTS",
+            message: "This email is already registered.",
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const result = await sendSignupVerificationCode(email);
